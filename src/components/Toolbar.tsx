@@ -122,6 +122,13 @@ export function Toolbar() {
 
       {showShortcuts && (
         <div className="absolute top-16 right-4 bg-card border rounded-lg shadow-lg p-4 z-50">
+          <h3 className="font-semibold mb-2">How to Use</h3>
+          <div className="space-y-1 text-sm mb-3">
+            <div className="flex justify-between gap-4">
+              <span className="text-muted-foreground">Draw Annotation</span>
+              <kbd className="px-2 py-1 bg-muted rounded">Click & Drag</kbd>
+            </div>
+          </div>
           <h3 className="font-semibold mb-2">Keyboard Shortcuts</h3>
           <div className="space-y-1 text-sm">
             <div className="flex justify-between gap-4">
@@ -145,7 +152,7 @@ export function Toolbar() {
               <kbd className="px-2 py-1 bg-muted rounded">Esc</kbd>
             </div>
             <div className="flex justify-between gap-4">
-              <span className="text-muted-foreground">Toggle Shortcuts</span>
+              <span className="text-muted-foreground">Toggle Help</span>
               <kbd className="px-2 py-1 bg-muted rounded">K</kbd>
             </div>
           </div>
