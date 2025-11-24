@@ -15,6 +15,7 @@ interface AppState {
   // Annotations State
   annotations: Annotation[];
   selectedAnnotationId: string | null;
+  pendingLabelEdit: string | null;
   
   // Paint Mode State
   isPaintMode: boolean;
@@ -37,6 +38,7 @@ interface AppState {
   clearPaintedUVCoords: () => void;
   createAnnotationFromPaint: () => void;
   redrawAnnotationsOnCanvas: () => void;
+  setPendingLabelEdit: (id: string | null) => void;
 }
 
 export const useStore = create<AppState>((set, get) => ({
@@ -48,6 +50,7 @@ export const useStore = create<AppState>((set, get) => ({
   uvCanvas: null,
   annotations: [],
   selectedAnnotationId: null,
+  pendingLabelEdit: null,
   isPaintMode: false,
   brushSize: 20,
   paintedUVCoords: [],
@@ -87,6 +90,8 @@ export const useStore = create<AppState>((set, get) => ({
   },
   
   setSelectedAnnotationId: (id) => set({ selectedAnnotationId: id }),
+  
+  setPendingLabelEdit: (id) => set({ pendingLabelEdit: id }),
   
   clearAnnotations: () => set({ annotations: [], selectedAnnotationId: null }),
   
@@ -171,7 +176,8 @@ export const useStore = create<AppState>((set, get) => ({
       }
     }
     
-    // Create annotation
+    // Create annotation with b${n} naming
+    const existingBoxCount = state.annotations.filter(a => a.label.match(/^b\d+$/)).length;
     const newAnnotation: Annotation = {
       id: `ann-${Date.now()}`,
       x,
@@ -179,7 +185,7 @@ export const useStore = create<AppState>((set, get) => ({
       width,
       height,
       rotation: 0,
-      label: 'Painted Annotation',
+      label: `b${existingBoxCount + 1}`,
     };
     
     set((state) => ({
@@ -187,6 +193,7 @@ export const useStore = create<AppState>((set, get) => ({
       selectedAnnotationId: newAnnotation.id,
       paintedUVCoords: [],
       isPaintMode: false,
+      pendingLabelEdit: newAnnotation.id, // Flag for showing label dialog
     }));
     
     // Redraw all annotations on the UV canvas

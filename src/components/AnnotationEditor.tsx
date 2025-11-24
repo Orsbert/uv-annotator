@@ -276,11 +276,13 @@ export function AnnotationEditor() {
   }
 
   return (
-    <div className="w-full h-full overflow-auto bg-muted">
+    <div className="w-full h-full flex items-center justify-center bg-muted p-4">
       <Stage
         ref={stageRef}
         width={1024}
         height={1024}
+        scaleX={0.9}
+        scaleY={0.9}
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
