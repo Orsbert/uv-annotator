@@ -55,6 +55,14 @@ function Scene() {
   };
 
   const handlePointerUp = () => {
+    if (isPaintingRef.current && isPaintMode) {
+      // Auto-create annotation when stopping painting
+      const paintedUVCoords = useStore.getState().paintedUVCoords;
+      if (paintedUVCoords.length > 0) {
+        const createAnnotationFromPaint = useStore.getState().createAnnotationFromPaint;
+        createAnnotationFromPaint();
+      }
+    }
     isPaintingRef.current = false;
   };
 

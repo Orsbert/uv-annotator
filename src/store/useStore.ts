@@ -36,6 +36,7 @@ interface AppState {
   addPaintedUVCoord: (coord: { u: number; v: number }) => void;
   clearPaintedUVCoords: () => void;
   createAnnotationFromPaint: () => void;
+  redrawAnnotationsOnCanvas: () => void;
 }
 
 export const useStore = create<AppState>((set, get) => ({
@@ -57,24 +58,33 @@ export const useStore = create<AppState>((set, get) => ({
   setSelectedMesh: (mesh) => set({ selectedMesh: mesh }),
   setUVTexture: (texture, canvas) => set({ uvTexture: texture, uvCanvas: canvas }),
   
-  addAnnotation: (annotation) => 
+  addAnnotation: (annotation) => {
     set((state) => ({ 
       annotations: [...state.annotations, annotation],
       selectedAnnotationId: annotation.id 
-    })),
+    }));
+    // Redraw annotations on canvas texture
+    setTimeout(() => get().redrawAnnotationsOnCanvas(), 0);
+  },
   
-  updateAnnotation: (id, updates) =>
+  updateAnnotation: (id, updates) => {
     set((state) => ({
       annotations: state.annotations.map((ann) =>
         ann.id === id ? { ...ann, ...updates } : ann
       ),
-    })),
+    }));
+    // Redraw annotations on canvas texture
+    setTimeout(() => get().redrawAnnotationsOnCanvas(), 0);
+  },
   
-  deleteAnnotation: (id) =>
+  deleteAnnotation: (id) => {
     set((state) => ({
       annotations: state.annotations.filter((ann) => ann.id !== id),
       selectedAnnotationId: state.selectedAnnotationId === id ? null : state.selectedAnnotationId,
-    })),
+    }));
+    // Redraw annotations on canvas texture
+    setTimeout(() => get().redrawAnnotationsOnCanvas(), 0);
+  },
   
   setSelectedAnnotationId: (id) => set({ selectedAnnotationId: id }),
   
@@ -84,16 +94,42 @@ export const useStore = create<AppState>((set, get) => ({
   
   setBrushSize: (size) => set({ brushSize: size }),
   
-  addPaintedUVCoord: (coord) =>
+  addPaintedUVCoord: (coord) => {
+    const state = get();
+    const { uvCanvas, uvTexture, brushSize } = state;
+    
+    if (!uvCanvas) return;
+    
+    // Draw on the canvas immediately
+    const ctx = uvCanvas.getContext('2d');
+    if (!ctx) return;
+    
+    // Convert UV coords (0-1) to pixel coords (0-1024)
+    const x = coord.u * uvCanvas.width;
+    const y = (1 - coord.v) * uvCanvas.height; // Flip V
+    
+    // Draw a circle at the brush position
+    ctx.fillStyle = 'rgba(0, 255, 0, 0.5)'; // Semi-transparent green
+    ctx.beginPath();
+    ctx.arc(x, y, brushSize / 2, 0, Math.PI * 2);
+    ctx.fill();
+    
+    // Update texture
+    if (uvTexture) {
+      uvTexture.needsUpdate = true;
+    }
+    
+    // Store the coordinate for bounding box calculation
     set((state) => ({
       paintedUVCoords: [...state.paintedUVCoords, coord],
-    })),
+    }));
+  },
   
   clearPaintedUVCoords: () => set({ paintedUVCoords: [] }),
   
   createAnnotationFromPaint: () => {
     const state = get();
-    const { paintedUVCoords, uvCanvas } = state;
+    const { paintedUVCoords, uvCanvas, uvTexture } = state;
     
     if (paintedUVCoords.length === 0 || !uvCanvas) return;
     
@@ -116,6 +152,25 @@ export const useStore = create<AppState>((set, get) => ({
     const width = Math.min(uvCanvas.width - x, maxX - minX + padding * 2);
     const height = Math.min(uvCanvas.height - y, maxY - minY + padding * 2);
     
+    // Clear the painted strokes from the canvas
+    const ctx = uvCanvas.getContext('2d');
+    if (ctx) {
+      // Redraw the base UV layout without the paint strokes
+      const selectedMesh = state.selectedMesh;
+      if (selectedMesh) {
+        import('../utils/uvGenerator').then(({ generateUVLayout }) => {
+          const { canvas: newCanvas } = generateUVLayout(selectedMesh);
+          // Copy the clean UV layout back
+          ctx.clearRect(0, 0, uvCanvas.width, uvCanvas.height);
+          ctx.drawImage(newCanvas, 0, 0);
+          
+          if (uvTexture) {
+            uvTexture.needsUpdate = true;
+          }
+        });
+      }
+    }
+    
     // Create annotation
     const newAnnotation: Annotation = {
       id: `ann-${Date.now()}`,
@@ -133,5 +188,66 @@ export const useStore = create<AppState>((set, get) => ({
       paintedUVCoords: [],
       isPaintMode: false,
     }));
+    
+    // Redraw all annotations on the UV canvas
+    get().redrawAnnotationsOnCanvas();
+  },
+  
+  // Helper function to draw annotations on the UV canvas texture
+  redrawAnnotationsOnCanvas: () => {
+    const state = get();
+    const { uvCanvas, uvTexture, annotations } = state;
+    
+    if (!uvCanvas) return;
+    
+    const ctx = uvCanvas.getContext('2d');
+    if (!ctx) return;
+    
+    // First regenerate clean UV layout
+    const selectedMesh = state.selectedMesh;
+    if (!selectedMesh) return;
+    
+    import('../utils/uvGenerator').then(({ generateUVLayout }) => {
+      const { canvas: newCanvas } = generateUVLayout(selectedMesh);
+      ctx.clearRect(0, 0, uvCanvas.width, uvCanvas.height);
+      ctx.drawImage(newCanvas, 0, 0);
+      
+      // Draw all annotations on top
+      annotations.forEach((ann) => {
+        ctx.save();
+        
+        // Translate to annotation center for rotation
+        ctx.translate(ann.x + ann.width / 2, ann.y + ann.height / 2);
+        ctx.rotate((ann.rotation * Math.PI) / 180);
+        ctx.translate(-(ann.x + ann.width / 2), -(ann.y + ann.height / 2));
+        
+        // Draw filled rectangle with transparency
+        ctx.fillStyle = 'rgba(255, 0, 0, 0.2)';
+        ctx.fillRect(ann.x, ann.y, ann.width, ann.height);
+        
+        // Draw rectangle border
+        ctx.strokeStyle = '#ff0000';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(ann.x, ann.y, ann.width, ann.height);
+        
+        // Draw label background
+        ctx.fillStyle = 'rgba(255, 0, 0, 0.9)';
+        const labelHeight = 22;
+        ctx.fillRect(ann.x, ann.y - labelHeight, ann.width, labelHeight);
+        
+        // Draw label text
+        ctx.fillStyle = '#ffffff';
+        ctx.font = '14px Arial';
+        ctx.textAlign = 'center';
+        ctx.fillText(ann.label, ann.x + ann.width / 2, ann.y - 5);
+        
+        ctx.restore();
+      });
+      
+      // Update texture
+      if (uvTexture) {
+        uvTexture.needsUpdate = true;
+      }
+    });
   },
 }));
