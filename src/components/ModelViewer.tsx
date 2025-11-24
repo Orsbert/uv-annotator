@@ -1,4 +1,5 @@
-import { Canvas } from '@react-three/fiber';
+import { useRef, useState } from 'react';
+import { Canvas, ThreeEvent } from '@react-three/fiber';
 import { OrbitControls, Grid, Environment } from '@react-three/drei';
 import { useStore } from '../store/useStore';
 import * as THREE from 'three';
@@ -8,6 +9,12 @@ function Scene() {
   const selectedMesh = useStore((state) => state.selectedMesh);
   const uvTexture = useStore((state) => state.uvTexture);
   const setSelectedMesh = useStore((state) => state.setSelectedMesh);
+  const isPaintMode = useStore((state) => state.isPaintMode);
+  const addPaintedUVCoord = useStore((state) => state.addPaintedUVCoord);
+  const brushSize = useStore((state) => state.brushSize);
+  
+  const [paintIndicator, setPaintIndicator] = useState<{ position: THREE.Vector3; normal: THREE.Vector3 } | null>(null);
+  const isPaintingRef = useRef(false);
 
   // Apply texture to selected mesh
   if (selectedMesh && uvTexture && selectedMesh.material) {
@@ -18,8 +25,59 @@ function Scene() {
     }
   }
 
-  const handleMeshClick = (mesh: THREE.Mesh) => {
-    setSelectedMesh(mesh);
+  const handlePointerDown = (e: ThreeEvent<PointerEvent>) => {
+    if (isPaintMode && e.object === selectedMesh) {
+      e.stopPropagation();
+      isPaintingRef.current = true;
+      handlePaint(e);
+    }
+  };
+
+  const handlePointerMove = (e: ThreeEvent<PointerEvent>) => {
+    if (isPaintMode && e.object === selectedMesh) {
+      e.stopPropagation();
+      
+      // R3F provides point and face automatically
+      if (e.point && e.face) {
+        setPaintIndicator({
+          position: e.point,
+          normal: e.face.normal,
+        });
+        
+        if (isPaintingRef.current) {
+          handlePaint(e);
+        }
+      }
+    } else if (isPaintMode) {
+      // Clear indicator when not over selected mesh
+      setPaintIndicator(null);
+    }
+  };
+
+  const handlePointerUp = () => {
+    isPaintingRef.current = false;
+  };
+
+  const handlePaint = (e: ThreeEvent<PointerEvent>) => {
+    if (!isPaintMode || e.object !== selectedMesh) return;
+
+    e.stopPropagation();
+
+    // R3F provides UV coordinates automatically
+    if (e.uv) {
+      addPaintedUVCoord({ u: e.uv.x, v: e.uv.y });
+    }
+  };
+
+  const handleMeshClick = (e: ThreeEvent<MouseEvent>) => {
+    if (isPaintMode) {
+      handlePaint(e as any);
+    } else {
+      e.stopPropagation();
+      if (e.object instanceof THREE.Mesh) {
+        setSelectedMesh(e.object);
+      }
+    }
   };
 
   return (
@@ -32,13 +90,32 @@ function Scene() {
       {model && (
         <primitive 
           object={model} 
-          onClick={(e: any) => {
-            e.stopPropagation();
-            if (e.object instanceof THREE.Mesh) {
-              handleMeshClick(e.object);
-            }
-          }}
+          onPointerDown={handlePointerDown}
+          onPointerMove={handlePointerMove}
+          onPointerUp={handlePointerUp}
+          onClick={handleMeshClick}
         />
+      )}
+      
+      {/* Paint brush cursor - ring on surface */}
+      {isPaintMode && paintIndicator && (
+        <group position={paintIndicator.position}>
+          {/* Outer ring */}
+          <mesh rotation={[-Math.PI / 2, 0, 0]}>
+            <ringGeometry args={[brushSize / 500, brushSize / 500 + 0.01, 32]} />
+            <meshBasicMaterial color="#00ff00" side={THREE.DoubleSide} transparent opacity={0.8} depthTest={false} />
+          </mesh>
+          {/* Inner filled circle for better visibility */}
+          <mesh rotation={[-Math.PI / 2, 0, 0]}>
+            <circleGeometry args={[brushSize / 500, 32]} />
+            <meshBasicMaterial color="#00ff00" side={THREE.DoubleSide} transparent opacity={0.2} depthTest={false} />
+          </mesh>
+          {/* Center dot */}
+          <mesh>
+            <sphereGeometry args={[0.005, 8, 8]} />
+            <meshBasicMaterial color="#00ff00" depthTest={false} />
+          </mesh>
+        </group>
       )}
       
       <Grid 
@@ -53,7 +130,8 @@ function Scene() {
         fadeDistance={30} 
       />
       
-      <OrbitControls makeDefault />
+      {/* Completely disable OrbitControls in paint mode */}
+      <OrbitControls makeDefault enabled={!isPaintMode} />
       <Environment preset="studio" />
     </>
   );

@@ -10,6 +10,8 @@ export function useKeyboardShortcuts() {
   const selectedMesh = useStore((state) => state.selectedMesh);
   const setUVTexture = useStore((state) => state.setUVTexture);
   const uvCanvas = useStore((state) => state.uvCanvas);
+  const isPaintMode = useStore((state) => state.isPaintMode);
+  const setPaintMode = useStore((state) => state.setPaintMode);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -33,16 +35,28 @@ export function useKeyboardShortcuts() {
         addAnnotation(newAnnotation);
       }
 
+      // P - Toggle paint mode
+      if (e.key === 'p' || e.key === 'P') {
+        e.preventDefault();
+        if (uvCanvas) {
+          setPaintMode(!isPaintMode);
+        }
+      }
+
       // Delete/Backspace - Delete selected annotation
       if ((e.key === 'Delete' || e.key === 'Backspace') && selectedAnnotationId) {
         e.preventDefault();
         deleteAnnotation(selectedAnnotationId);
       }
 
-      // Escape - Deselect annotation
+      // Escape - Deselect annotation or exit paint mode
       if (e.key === 'Escape') {
         e.preventDefault();
-        setSelectedAnnotationId(null);
+        if (isPaintMode) {
+          setPaintMode(false);
+        } else {
+          setSelectedAnnotationId(null);
+        }
       }
 
       // G - Generate UV layout
@@ -75,5 +89,5 @@ export function useKeyboardShortcuts() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [selectedAnnotationId, addAnnotation, deleteAnnotation, setSelectedAnnotationId, selectedMesh, uvCanvas, setUVTexture]);
+  }, [selectedAnnotationId, addAnnotation, deleteAnnotation, setSelectedAnnotationId, selectedMesh, uvCanvas, setUVTexture, isPaintMode, setPaintMode]);
 }
