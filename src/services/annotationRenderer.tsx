@@ -21,6 +21,7 @@ export function AnnotationBox({ annotation, isSelected, onSelect, onChange }: An
   const outerGroupRef = useRef<Konva.Group>(null);
   const rectGroupRef = useRef<Konva.Group>(null);
   const transformerRef = useRef<Konva.Transformer>(null);
+  const textRef = useRef<Konva.Text>(null);
 
   // Attach transformer to the rectangle group only (not the label)
   useEffect(() => {
@@ -29,6 +30,18 @@ export function AnnotationBox({ annotation, isSelected, onSelect, onChange }: An
       transformerRef.current.getLayer()?.batchDraw();
     }
   }, [isSelected, annotation]);
+
+  // Calculate label background width to accommodate text overflow
+  const getLabelWidth = () => {
+    if (textRef.current) {
+      const textWidth = textRef.current.width();
+      const padding = 16; // 8px on each side
+      return Math.max(width, textWidth + padding);
+    }
+    return width;
+  };
+
+  const labelWidth = getLabelWidth();
   
   return (
     <>
@@ -54,8 +67,17 @@ export function AnnotationBox({ annotation, isSelected, onSelect, onChange }: An
       </Group>
       
       {/* Label outside the transformed group so it doesn't affect resize handles */}
-      <Rect y={-22} width={width} height={22} fill="rgba(255, 0, 0, 0.9)" cornerRadius={[4, 4, 0, 0]} listening={false} />
+      <Rect 
+        x={width / 2 - labelWidth / 2} 
+        y={-22} 
+        width={labelWidth} 
+        height={22} 
+        fill="rgba(255, 0, 0, 0.9)" 
+        cornerRadius={[4, 4, 0, 0]} 
+        listening={false} 
+      />
       <Text
+        ref={textRef}
         x={width / 2}
         y={-18}
         text={label}
