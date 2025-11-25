@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { Stage, Layer, Rect, Image as KonvaImage } from 'react-konva';
 import Konva from 'konva';
+import { Plus, Minus, Maximize2 } from 'lucide-react';
 import { useAnnotationStore, useModelStore } from '../store/combinedStores';
 import { useCanvasStore } from '../store/combinedStores';
 import type { Annotation } from '../types';
 import { ANNOTATION_COLORS } from '../types';
 import { AnnotationBox } from '../services/annotationRenderer';
+import { Button } from './ui/button';
 
 // Deprecated AnnotationBoxProps interface removed.
 
@@ -32,6 +34,14 @@ export function AnnotationEditor() {
   
   // Container dimensions for responsive sizing
   const [containerSize, setContainerSize] = useState({ width: 0, height: 0 });
+  
+  // Zoom and pan state
+  const [stageScale, setStageScale] = useState(1);
+  const [stagePosition, setStagePosition] = useState({ x: 0, y: 0 });
+  const [isPanning, setIsPanning] = useState(false);
+  const [panStart, setPanStart] = useState<{ x: number; y: number } | null>(null);
+  const minScale = 0.1;
+  const maxScale = 10;
 
   // Load the UV canvas as an image for Konva
   useEffect(() => {
@@ -86,28 +96,53 @@ export function AnnotationEditor() {
   }, [uvCanvas]); // Re-measure when uvCanvas changes
 
   const handleMouseDown = (e: any) => {
-    // Only start drawing if clicking on the background (not on existing annotations)
+    const stage = stageRef.current;
+    if (!stage) return;
+
+    // Only start drawing/panning if clicking on the background
     if (e.target !== e.target.getStage() && e.target.getClassName() !== 'Image') {
       return;
     }
 
-    const stage = stageRef.current;
-    if (!stage) return;
+    const pointer = stage.getPointerPosition();
+    if (!pointer) return;
 
-    const pos = stage.getRelativePointerPosition();
-    if (!pos) return;
-
-    setIsDrawing(true);
-    setDrawStart(pos);
-    setCurrentRect({ x: pos.x, y: pos.y, width: 0, height: 0 });
+    // Check if spacebar is held (common pan shortcut) or just regular click for pan
+    const shouldPan = true; // For now, background click = pan
+    
+    if (shouldPan) {
+      setIsPanning(true);
+      setPanStart(pointer);
+    } else {
+      const pos = stage.getRelativePointerPosition();
+      if (!pos) return;
+      setIsDrawing(true);
+      setDrawStart(pos);
+      setCurrentRect({ x: pos.x, y: pos.y, width: 0, height: 0 });
+    }
+    
     setSelectedAnnotationId(null);
   };
 
   const handleMouseMove = () => {
-    if (!isDrawing || !drawStart) return;
-
     const stage = stageRef.current;
     if (!stage) return;
+
+    const pointer = stage.getPointerPosition();
+    if (!pointer) return;
+
+    if (isPanning && panStart) {
+      const dx = pointer.x - panStart.x;
+      const dy = pointer.y - panStart.y;
+      setStagePosition({
+        x: stagePosition.x + dx,
+        y: stagePosition.y + dy,
+      });
+      setPanStart(pointer);
+      return;
+    }
+
+    if (!isDrawing || !drawStart) return;
 
     const pos = stage.getRelativePointerPosition();
     if (!pos) return;
@@ -124,6 +159,12 @@ export function AnnotationEditor() {
   };
 
   const handleMouseUp = () => {
+    if (isPanning) {
+      setIsPanning(false);
+      setPanStart(null);
+      return;
+    }
+    
     if (!isDrawing || !currentRect) {
       setIsDrawing(false);
       setDrawStart(null);
@@ -160,6 +201,52 @@ export function AnnotationEditor() {
     setCurrentRect(null);
   };
 
+  const handleWheel = (e: any) => {
+    e.evt.preventDefault();
+
+    const stage = stageRef.current;
+    if (!stage) return;
+
+    const pointer = stage.getPointerPosition();
+    if (!pointer) return;
+
+    const scaleBy = 1.1;
+    const oldScale = stageScale; // Use state scale, not stage.scaleX()
+    const newScale = e.evt.deltaY > 0 
+      ? Math.max(minScale, oldScale / scaleBy) 
+      : Math.min(maxScale, oldScale * scaleBy);
+
+    setStageScale(newScale);
+
+    // Zoom to pointer position
+    const mousePointTo = {
+      x: (pointer.x - stagePosition.x) / (oldScale * scale),
+      y: (pointer.y - stagePosition.y) / (oldScale * scale),
+    };
+
+    const newPos = {
+      x: pointer.x - mousePointTo.x * newScale * scale,
+      y: pointer.y - mousePointTo.y * newScale * scale,
+    };
+
+    setStagePosition(newPos);
+  };
+
+  const handleZoomIn = () => {
+    const newScale = Math.min(maxScale, stageScale * 1.2);
+    setStageScale(newScale);
+  };
+
+  const handleZoomOut = () => {
+    const newScale = Math.max(minScale, stageScale / 1.2);
+    setStageScale(newScale);
+  };
+
+  const handleResetZoom = () => {
+    setStageScale(1);
+    setStagePosition({ x: 0, y: 0 });
+  };
+
   if (!uvCanvas) {
     return (
       <div className="w-full h-full flex items-center justify-center bg-muted">
@@ -180,14 +267,50 @@ export function AnnotationEditor() {
   const stageHeight = baseSize;
 
   return (
-    <div ref={containerRef} className="w-full h-full flex items-center justify-center bg-muted overflow-hidden">
+    <div ref={containerRef} className="w-full h-full flex items-center justify-center bg-muted overflow-hidden relative">
+      {/* Zoom controls */}
+      <div className="absolute top-4 right-4 z-10 flex flex-col gap-2 bg-background/90 backdrop-blur-sm p-2 rounded-lg border shadow-lg">
+        <Button 
+          size="icon" 
+          variant="outline" 
+          onClick={handleZoomIn}
+          className="h-8 w-8"
+        >
+          <Plus className="h-4 w-4" />
+        </Button>
+        <Button 
+          size="icon" 
+          variant="outline" 
+          onClick={handleZoomOut}
+          className="h-8 w-8"
+        >
+          <Minus className="h-4 w-4" />
+        </Button>
+        <Button 
+          size="icon" 
+          variant="outline" 
+          onClick={handleResetZoom}
+          className="h-8 w-8"
+          title="Reset zoom"
+        >
+          <Maximize2 className="h-4 w-4" />
+        </Button>
+        <div className="text-xs text-center text-muted-foreground px-1">
+          {Math.round(stageScale * 100)}%
+        </div>
+      </div>
+
       <div style={{ width: stageWidth * scale, height: stageHeight * scale }}>
         <Stage
           ref={stageRef}
           width={stageWidth}
           height={stageHeight}
-          scaleX={scale}
-          scaleY={scale}
+          scaleX={scale * stageScale}
+          scaleY={scale * stageScale}
+          x={stagePosition.x}
+          y={stagePosition.y}
+          draggable={false}
+          onWheel={handleWheel}
           onMouseDown={handleMouseDown}
           onMouseMove={handleMouseMove}
           onMouseUp={handleMouseUp}
