@@ -51,7 +51,7 @@ export function generateUVLayout(mesh: THREE.Mesh): { canvas: HTMLCanvasElement;
       for (let j = 0; j < 3; j++) {
         const idx = indices[j];
         const u = uvAttribute.getX(idx);
-        const v = 1 - uvAttribute.getY(idx); // Flip V coordinate
+        const v = uvAttribute.getY(idx); // Use V coordinate as-is (no flip)
         const x = u * canvas.width;
         const y = v * canvas.height;
         
@@ -71,7 +71,7 @@ export function generateUVLayout(mesh: THREE.Mesh): { canvas: HTMLCanvasElement;
       for (let j = 0; j < 3; j++) {
         const idx = i + j;
         const u = uvAttribute.getX(idx);
-        const v = 1 - uvAttribute.getY(idx); // Flip V coordinate
+        const v = uvAttribute.getY(idx); // Use V coordinate as-is (no flip)
         const x = u * canvas.width;
         const y = v * canvas.height;
         
@@ -89,6 +89,8 @@ export function generateUVLayout(mesh: THREE.Mesh): { canvas: HTMLCanvasElement;
   // Create Three.js texture from canvas
   const texture = new THREE.CanvasTexture(canvas);
   texture.needsUpdate = true;
+  // Prevent vertical flip so UV layout matches three.js UV coordinates (origin bottom-left)
+  texture.flipY = false;
   
   return { canvas, texture };
 }

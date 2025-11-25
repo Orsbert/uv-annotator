@@ -65,7 +65,7 @@ export function AnnotationBox({ annotation, isSelected, onSelect, onChange }: An
   
   return (
     <>
-      {/* Main rectangle group - this is what gets transformed */}
+      {/* Main group positioned at top-left, rotation around top-left */}
       <Group
         x={x}
         y={y}
@@ -79,10 +79,10 @@ export function AnnotationBox({ annotation, isSelected, onSelect, onChange }: An
         onDragEnd={() => {
           const node = rectGroupRef.current;
           if (!node) return;
-          
-          onChange({ 
-            x: node.x(), 
-            y: node.y() 
+          // Direct top-left coordinates
+          onChange({
+            x: node.x(),
+            y: node.y(),
           });
         }}
         onTransformEnd={() => {
@@ -96,34 +96,33 @@ export function AnnotationBox({ annotation, isSelected, onSelect, onChange }: An
           const newWidth = Math.max(5, width * scaleX);
           const newHeight = Math.max(5, height * scaleY);
 
-          // Update rectangle dimensions immediately
+          // Update rectangle dimensions
           rect.width(newWidth);
           rect.height(newHeight);
 
-          // Update label immediately to match new width
+          // Update label size
           const labelBg = labelBgRef.current;
           const labelText = textRef.current;
           if (labelBg && labelText) {
             const textWidth = labelText.width();
             const padding = 16;
             const newLabelWidth = Math.max(newWidth, textWidth + padding);
-            
             labelBg.width(newLabelWidth);
-            labelBg.x(newWidth / 2 - newLabelWidth / 2);
-            labelText.x(newWidth / 2);
+            labelBg.x(-newLabelWidth / 2);
+            labelText.x(0);
           }
 
           // Reset scale
           node.scaleX(1);
           node.scaleY(1);
 
-          // Force transformer to update with new dimensions
+          // Force transformer update
           if (transformerRef.current) {
             transformerRef.current.forceUpdate();
             transformerRef.current.getLayer()?.batchDraw();
           }
 
-          // Now notify parent of the change
+          // Notify parent with updated attributes (position stays top-left)
           onChange({
             x: node.x(),
             y: node.y(),
@@ -133,7 +132,7 @@ export function AnnotationBox({ annotation, isSelected, onSelect, onChange }: An
           });
         }}
         onDragMove={() => {
-          // Sync label position during drag
+          // Keep label group in sync
           const rectGroup = rectGroupRef.current;
           const labelGroup = labelGroupRef.current;
           if (rectGroup && labelGroup) {
@@ -146,15 +145,15 @@ export function AnnotationBox({ annotation, isSelected, onSelect, onChange }: An
         {/* Main rectangle */}
         <Rect
           ref={rectRef}
-          width={width} 
-          height={height} 
+          width={width}
+          height={height}
           stroke={colorTheme.main}
           strokeWidth={isHovered ? 3 : 2}
           fill={colorTheme.light}
         />
       </Group>
 
-      {/* Label group - follows the rectangle but is NOT transformed */}
+      {/* Label group – positioned at top-left, follows rotation */}
       <Group
         x={x}
         y={y}
@@ -162,27 +161,25 @@ export function AnnotationBox({ annotation, isSelected, onSelect, onChange }: An
         ref={labelGroupRef}
         listening={false}
       >
-        {/* Label background - centered and extends if text overflows */}
+        {/* Label background centered */}
         <Rect
           ref={labelBgRef}
-          x={width / 2 - labelWidth / 2} 
-          y={-22} 
-          width={labelWidth} 
+          x={-labelWidth / 2}
+          y={-22}
+          width={labelWidth}
           height={22}
           fill={colorTheme.dark}
-          cornerRadius={[4, 4, 0, 0]} 
+          cornerRadius={[4, 4, 0, 0]}
         />
-        
         {/* Label text */}
         <Text
           ref={textRef}
-          x={width / 2}
+          x={0}
           y={-18}
           text={label}
           fontSize={14}
           fill="#ffffff"
           align="center"
-          offsetX={textRef.current ? textRef.current.width() / 2 : 0}
         />
       </Group>
 
@@ -190,10 +187,6 @@ export function AnnotationBox({ annotation, isSelected, onSelect, onChange }: An
         <Transformer
           ref={transformerRef}
           rotateEnabled={true}
-          anchorSize={8}
-          anchorStroke="#0066ff"
-          anchorStrokeWidth={2}
-          anchorFill="#ffffff"
           enabledAnchors={[
             'top-left', 'top-center', 'top-right',
             'middle-left', 'middle-right',
@@ -253,3 +246,4 @@ export function renderAnnotationToCanvas(ctx: CanvasRenderingContext2D, ann: Ann
 export function renderAnnotationsToCanvas(ctx: CanvasRenderingContext2D, annotations: Annotation[]) {
   annotations.forEach((ann) => renderAnnotationToCanvas(ctx, ann));
 }
+

@@ -100,7 +100,7 @@ export const usePaintStore = create<PaintState>((set, get) => ({
     const ctx = uvCanvas.getContext('2d');
     if (!ctx) return;
     const x = coord.u * uvCanvas.width;
-    const y = (1 - coord.v) * uvCanvas.height; // UV origin is bottom-left, canvas is top-left
+    const y = coord.v * uvCanvas.height; // Use V as-is (no flip)
     ctx.fillStyle = 'rgba(0, 255, 0, 0.5)';
     ctx.beginPath();
     ctx.arc(x, y, brushSize / 2, 0, Math.PI * 2);
@@ -121,7 +121,7 @@ export const usePaintStore = create<PaintState>((set, get) => ({
     // Convert UV coords (0-1) to pixel coords
     const pixelCoords = paintedUVCoords.map(({ u, v }) => ({
       x: u * uvCanvas.width,
-      y: (1 - v) * uvCanvas.height, // Flip V
+      y: v * uvCanvas.height, // Use V as-is (no flip)
     }));
 
     // Calculate bounding box
