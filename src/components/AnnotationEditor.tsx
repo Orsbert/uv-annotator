@@ -4,7 +4,7 @@ import Konva from 'konva';
 import { useAnnotationStore } from '../store/combinedStores';
 import { useCanvasStore } from '../store/combinedStores';
 import type { Annotation } from '../types';
-import { renderAnnotationToKonva } from '../services/annotationRenderer';
+import { AnnotationBox } from '../services/annotationRenderer';
 
 // Deprecated AnnotationBoxProps interface removed.
 
@@ -163,14 +163,15 @@ export function AnnotationEditor() {
           <Layer>
             {image && <KonvaImage image={image} />}
             
-            {annotations.map((annotation) =>
-              renderAnnotationToKonva(
-                annotation,
-                annotation.id === selectedAnnotationId,
-                () => setSelectedAnnotationId(annotation.id),
-                (newAttrs) => updateAnnotation(annotation.id, newAttrs)
-              )
-            )}{/* Draw preview rectangle while dragging */}
+            {annotations.map((annotation) => (
+              <AnnotationBox
+                key={annotation.id}
+                annotation={annotation}
+                isSelected={annotation.id === selectedAnnotationId}
+                onSelect={() => setSelectedAnnotationId(annotation.id)}
+                onChange={(newAttrs) => updateAnnotation(annotation.id, newAttrs)}
+              />
+            ))}{/* Draw preview rectangle while dragging */}
             {isDrawing && currentRect && (
               <Rect
                 x={currentRect.x}

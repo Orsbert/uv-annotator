@@ -4,24 +4,32 @@ import type { Annotation } from '../types';
 import { Group, Rect, Text, Transformer } from 'react-konva';
 import { useEffect, useRef } from 'react';
 import Konva from 'konva';
-// import React from 'react'; // removed unused import
+
+interface AnnotationBoxProps {
+  annotation: Annotation;
+  isSelected: boolean;
+  onSelect: () => void;
+  onChange: (newAttrs: Partial<Annotation>) => void;
+}
 
 /**
  * Render a single annotation as a Konva Group.
- * This mirrors the previous JSX used in AnnotationEditor.
+ * This is a React component that properly uses hooks.
  */
-export function renderAnnotationToKonva(annotation: Annotation, isSelected: boolean, onSelect: () => void, onChange: (newAttrs: Partial<Annotation>) => void) {
+export function AnnotationBox({ annotation, isSelected, onSelect, onChange }: AnnotationBoxProps) {
   const { x, y, width, height, rotation, label } = annotation;
-  const groupRef = useRef<Konva.Group>(null);
+  const outerGroupRef = useRef<Konva.Group>(null);
+  const rectGroupRef = useRef<Konva.Group>(null);
   const transformerRef = useRef<Konva.Transformer>(null);
 
-  // Attach transformer when selected
+  // Attach transformer to the rectangle group only (not the label)
   useEffect(() => {
-    if (isSelected && groupRef.current && transformerRef.current) {
-      transformerRef.current.nodes([groupRef.current]);
+    if (isSelected && rectGroupRef.current && transformerRef.current) {
+      transformerRef.current.nodes([rectGroupRef.current]);
       transformerRef.current.getLayer()?.batchDraw();
     }
   }, [isSelected, annotation]);
+  
   return (
     <>
     <Group
@@ -33,35 +41,20 @@ export function renderAnnotationToKonva(annotation: Annotation, isSelected: bool
       draggable
       onClick={onSelect}
       onTap={onSelect}
-      ref={groupRef}
+      ref={outerGroupRef}
       onDragEnd={(e) => {
         const newX = e.target.x() - annotation.width / 2;
         const newY = e.target.y() - annotation.height / 2;
         onChange({ x: newX, y: newY });
-        // Force transformer update after drag
-        // Note: transformer is managed by parent if needed
-      }}
-      onTransformEnd={() => {
-        const node = groupRef.current;
-        if (node) {
-          const scaleX = node.scaleX();
-          const scaleY = node.scaleY();
-          node.scaleX(1);
-          node.scaleY(1);
-          const newWidth = Math.max(5, annotation.width * scaleX);
-          const newHeight = Math.max(5, annotation.height * scaleY);
-          onChange({
-            x: node.x() - newWidth / 2,
-            y: node.y() - newHeight / 2,
-            width: newWidth,
-            height: newHeight,
-            rotation: node.rotation(),
-          });
-        }
       }}
     >
-      <Rect width={width} height={height} stroke="#ff0000" strokeWidth={2} fill="rgba(255, 0, 0, 0.2)" />
-      <Rect y={-22} width={width} height={22} fill="rgba(255, 0, 0, 0.9)" cornerRadius={[4, 4, 0, 0]} />
+      {/* Inner group for the main rectangle - this is what the Transformer will attach to */}
+      <Group ref={rectGroupRef}>
+        <Rect width={width} height={height} stroke="#ff0000" strokeWidth={2} fill="rgba(255, 0, 0, 0.2)" />
+      </Group>
+      
+      {/* Label outside the transformed group so it doesn't affect resize handles */}
+      <Rect y={-22} width={width} height={22} fill="rgba(255, 0, 0, 0.9)" cornerRadius={[4, 4, 0, 0]} listening={false} />
       <Text
         x={width / 2}
         y={-18}
@@ -69,9 +62,7 @@ export function renderAnnotationToKonva(annotation: Annotation, isSelected: bool
         fontSize={14}
         fill="#ffffff"
         align="center"
-        onClick={onSelect}
-        onTap={onSelect}
-        onDblClick={onSelect}
+        listening={false}
       />
     </Group>
       {isSelected && (
@@ -88,6 +79,46 @@ export function renderAnnotationToKonva(annotation: Annotation, isSelected: bool
               return oldBox;
             }
             return newBox;
+          }}
+          onTransform={() => {
+            const node = rectGroupRef.current;
+            if (node) {
+              const scaleX = node.scaleX();
+              
+              // Update the label width to match during transform
+              const outerGroup = outerGroupRef.current;
+              if (outerGroup) {
+                const labelBg = outerGroup.findOne('Rect') as Konva.Rect;
+                const labelText = outerGroup.findOne('Text') as Konva.Text;
+                if (labelBg && labelText) {
+                  const newWidth = annotation.width * scaleX;
+                  labelBg.width(newWidth);
+                  labelText.x(newWidth / 2);
+                }
+              }
+            }
+          }}
+          onTransformEnd={() => {
+            const node = rectGroupRef.current;
+            if (node) {
+              const scaleX = node.scaleX();
+              const scaleY = node.scaleY();
+              node.scaleX(1);
+              node.scaleY(1);
+              const newWidth = Math.max(5, annotation.width * scaleX);
+              const newHeight = Math.max(5, annotation.height * scaleY);
+              
+              const outerGroup = outerGroupRef.current;
+              if (outerGroup) {
+                onChange({
+                  x: outerGroup.x() - newWidth / 2,
+                  y: outerGroup.y() - newHeight / 2,
+                  width: newWidth,
+                  height: newHeight,
+                  rotation: outerGroup.rotation(),
+                });
+              }
+            }
           }}
         />
       )}
