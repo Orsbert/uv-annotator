@@ -17,12 +17,13 @@ function AnnotationBox({ annotation, isSelected, onSelect, onChange }: Annotatio
   const textRef = useRef<Konva.Text>(null);
   const [isEditingLabel, setIsEditingLabel] = useState(false);
 
+  // Update transformer whenever annotation or selection changes
   useEffect(() => {
     if (isSelected && groupRef.current && transformerRef.current) {
       transformerRef.current.nodes([groupRef.current]);
       transformerRef.current.getLayer()?.batchDraw();
     }
-  }, [isSelected]);
+  }, [isSelected, annotation]);
 
   const handleLabelDoubleClick = () => {
     setIsEditingLabel(true);
@@ -89,17 +90,28 @@ function AnnotationBox({ annotation, isSelected, onSelect, onChange }: Annotatio
     <>
       <Group
         ref={groupRef}
-        x={annotation.x}
-        y={annotation.y}
+        x={annotation.x + annotation.width / 2}
+        y={annotation.y + annotation.height / 2}
+        offsetX={annotation.width / 2}
+        offsetY={annotation.height / 2}
+        width={annotation.width}
+        height={annotation.height}
         rotation={annotation.rotation}
         draggable
         onClick={onSelect}
         onTap={onSelect}
         onDragEnd={(e) => {
+          const newX = e.target.x() - annotation.width / 2;
+          const newY = e.target.y() - annotation.height / 2;
           onChange({
-            x: e.target.x(),
-            y: e.target.y(),
+            x: newX,
+            y: newY,
           });
+          // Force transformer update after drag
+          if (transformerRef.current) {
+            transformerRef.current.forceUpdate();
+            transformerRef.current.getLayer()?.batchDraw();
+          }
         }}
         onTransformEnd={() => {
           const node = groupRef.current;
@@ -110,11 +122,14 @@ function AnnotationBox({ annotation, isSelected, onSelect, onChange }: Annotatio
             node.scaleX(1);
             node.scaleY(1);
 
+            const newWidth = Math.max(5, annotation.width * scaleX);
+            const newHeight = Math.max(5, annotation.height * scaleY);
+
             onChange({
-              x: node.x(),
-              y: node.y(),
-              width: Math.max(5, annotation.width * scaleX),
-              height: Math.max(5, annotation.height * scaleY),
+              x: node.x() - newWidth / 2,
+              y: node.y() - newHeight / 2,
+              width: newWidth,
+              height: newHeight,
               rotation: node.rotation(),
             });
           }
@@ -159,6 +174,13 @@ function AnnotationBox({ annotation, isSelected, onSelect, onChange }: Annotatio
             'middle-left', 'middle-right',
             'bottom-left', 'bottom-center', 'bottom-right'
           ]}
+          boundBoxFunc={(oldBox, newBox) => {
+            // Prevent the box from being too small
+            if (newBox.width < 5 || newBox.height < 5) {
+              return oldBox;
+            }
+            return newBox;
+          }}
         />
       )}
     </>
@@ -176,11 +198,15 @@ export function AnnotationEditor() {
   
   const [image, setImage] = useState<HTMLImageElement | null>(null);
   const stageRef = useRef<Konva.Stage>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
   
   // Drawing state
   const [isDrawing, setIsDrawing] = useState(false);
   const [drawStart, setDrawStart] = useState<{ x: number; y: number } | null>(null);
   const [currentRect, setCurrentRect] = useState<{ x: number; y: number; width: number; height: number } | null>(null);
+  
+  // Container dimensions for responsive sizing
+  const [containerSize, setContainerSize] = useState({ width: 0, height: 0 });
 
   // Load the UV canvas as an image for Konva
   useEffect(() => {
@@ -200,6 +226,21 @@ export function AnnotationEditor() {
     }
   }, [annotations, uvTexture, uvCanvas]);
 
+  // Measure container size and handle resize
+  useEffect(() => {
+    const updateSize = () => {
+      if (containerRef.current) {
+        const { width, height } = containerRef.current.getBoundingClientRect();
+        setContainerSize({ width, height });
+      }
+    };
+
+    // Use requestAnimationFrame to ensure DOM is ready
+    requestAnimationFrame(updateSize);
+    window.addEventListener('resize', updateSize);
+    return () => window.removeEventListener('resize', updateSize);
+  }, [uvCanvas]); // Re-measure when uvCanvas changes
+
   const handleMouseDown = (e: any) => {
     // Only start drawing if clicking on the background (not on existing annotations)
     if (e.target !== e.target.getStage() && e.target.getClassName() !== 'Image') {
@@ -209,7 +250,7 @@ export function AnnotationEditor() {
     const stage = stageRef.current;
     if (!stage) return;
 
-    const pos = stage.getPointerPosition();
+    const pos = stage.getRelativePointerPosition();
     if (!pos) return;
 
     setIsDrawing(true);
@@ -224,7 +265,7 @@ export function AnnotationEditor() {
     const stage = stageRef.current;
     if (!stage) return;
 
-    const pos = stage.getPointerPosition();
+    const pos = stage.getRelativePointerPosition();
     if (!pos) return;
 
     const width = pos.x - drawStart.x;
@@ -275,46 +316,57 @@ export function AnnotationEditor() {
     );
   }
 
-  return (
-    <div className="w-full h-full flex items-center justify-center bg-muted p-4">
-      <Stage
-        ref={stageRef}
-        width={1024}
-        height={1024}
-        scaleX={0.9}
-        scaleY={0.9}
-        onMouseDown={handleMouseDown}
-        onMouseMove={handleMouseMove}
-        onMouseUp={handleMouseUp}
-      >
-        <Layer>
-          {image && <KonvaImage image={image} />}
-          
-          {annotations.map((annotation) => (
-            <AnnotationBox
-              key={annotation.id}
-              annotation={annotation}
-              isSelected={annotation.id === selectedAnnotationId}
-              onSelect={() => setSelectedAnnotationId(annotation.id)}
-              onChange={(newAttrs) => updateAnnotation(annotation.id, newAttrs)}
-            />
-          ))}
+  // Calculate scale to fit container while maintaining aspect ratio
+  const baseSize = 1024; // UV canvas size
+  const padding = 32; // 16px padding on each side
+  const availableWidth = containerSize.width - padding;
+  const availableHeight = containerSize.height - padding;
+  const scale = Math.min(availableWidth / baseSize, availableHeight / baseSize, 1);
+  const stageWidth = baseSize;
+  const stageHeight = baseSize;
 
-          {/* Draw preview rectangle while dragging */}
-          {isDrawing && currentRect && (
-            <Rect
-              x={currentRect.x}
-              y={currentRect.y}
-              width={currentRect.width}
-              height={currentRect.height}
-              stroke="#ff0000"
-              strokeWidth={2}
-              dash={[5, 5]}
-              listening={false}
-            />
-          )}
-        </Layer>
-      </Stage>
+  return (
+    <div ref={containerRef} className="w-full h-full flex items-center justify-center bg-muted overflow-hidden">
+      <div style={{ width: stageWidth * scale, height: stageHeight * scale }}>
+        <Stage
+          ref={stageRef}
+          width={stageWidth}
+          height={stageHeight}
+          scaleX={scale}
+          scaleY={scale}
+          onMouseDown={handleMouseDown}
+          onMouseMove={handleMouseMove}
+          onMouseUp={handleMouseUp}
+        >
+          <Layer>
+            {image && <KonvaImage image={image} />}
+            
+            {annotations.map((annotation) => (
+              <AnnotationBox
+                key={annotation.id}
+                annotation={annotation}
+                isSelected={annotation.id === selectedAnnotationId}
+                onSelect={() => setSelectedAnnotationId(annotation.id)}
+                onChange={(newAttrs) => updateAnnotation(annotation.id, newAttrs)}
+              />
+            ))}
+
+            {/* Draw preview rectangle while dragging */}
+            {isDrawing && currentRect && (
+              <Rect
+                x={currentRect.x}
+                y={currentRect.y}
+                width={currentRect.width}
+                height={currentRect.height}
+                stroke="#ff0000"
+                strokeWidth={2}
+                dash={[5, 5]}
+                listening={false}
+              />
+            )}
+          </Layer>
+        </Stage>
+      </div>
     </div>
   );
 }
