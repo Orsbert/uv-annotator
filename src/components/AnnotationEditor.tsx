@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Stage, Layer, Rect, Image as KonvaImage } from 'react-konva';
 import Konva from 'konva';
-import { useAnnotationStore } from '../store/combinedStores';
+import { useAnnotationStore, useModelStore } from '../store/combinedStores';
 import { useCanvasStore } from '../store/combinedStores';
 import type { Annotation } from '../types';
 import { ANNOTATION_COLORS } from '../types';
@@ -19,6 +19,7 @@ export function AnnotationEditor() {
   const setSelectedAnnotationId = useAnnotationStore((state) => state.setSelectedAnnotationId);
   const addAnnotation = useAnnotationStore((state) => state.addAnnotation);
   const setPendingLabelEdit = useAnnotationStore((state) => state.setPendingLabelEdit);
+  const selectedMesh = useModelStore((state) => state.selectedMesh);
   
   const [image, setImage] = useState<HTMLImageElement | null>(null);
   const stageRef = useRef<Konva.Stage>(null);
@@ -46,9 +47,28 @@ export function AnnotationEditor() {
   // Update texture when annotations change
   useEffect(() => {
     if (uvTexture && uvCanvas) {
-      uvTexture.needsUpdate = true;
+      // Redraw canvas with annotations
+      const ctx = uvCanvas.getContext('2d');
+      if (ctx && selectedMesh) {
+        // Need to import these dynamically
+        import('../utils/uvGenerator').then(({ generateUVLayout }) => {
+          // Regenerate clean UV layout
+          const { canvas: newCanvas } = generateUVLayout(selectedMesh);
+          ctx.clearRect(0, 0, uvCanvas.width, uvCanvas.height);
+          ctx.drawImage(newCanvas, 0, 0);
+          
+          // Draw annotations
+          import('../services/annotationRenderer').then(({ renderAnnotationsToCanvas }) => {
+            const currentAnnotations = useAnnotationStore.getState().annotations;
+            renderAnnotationsToCanvas(ctx, currentAnnotations);
+            
+            // Force texture update
+            uvTexture.needsUpdate = true;
+          });
+        });
+      }
     }
-  }, [annotations, uvTexture, uvCanvas]);
+  }, [annotations, uvTexture, uvCanvas, selectedMesh]);
 
   // Measure container size and handle resize
   useEffect(() => {

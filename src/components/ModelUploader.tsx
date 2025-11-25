@@ -1,64 +1,36 @@
-import { useRef, useEffect, useState } from 'react';
-import { GLTFLoader } from 'three-stdlib';
-import * as THREE from 'three';
+import { useRef } from 'react';
 import { Upload } from 'lucide-react';
 import { Button } from './ui/button';
 import { useModelStore } from '../store/combinedStores';
+import { useSessionStore } from '../store/useSessionStore';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 
 export function ModelUploader() {
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const setModel = useModelStore((state) => state.setModel);
-  const setMeshes = useModelStore((state) => state.setMeshes);
+  const setModelBuffer = useModelStore((state) => state.setModelBuffer);
+  const loadModelFromBuffer = useModelStore((state) => state.loadModelFromBuffer);
   const model = useModelStore((state) => state.model);
-  const [modelUrl, setModelUrl] = useState<string | null>(null);
+  const modelName = useModelStore((state) => state.modelName);
+  const updateSession = useSessionStore((state) => state.updateSession);
+  const currentSessionId = useSessionStore((state) => state.currentSessionId);
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    const url = URL.createObjectURL(file);
-    setModelUrl(url);
-  };
-
-  // Load the model when URL changes
-  useEffect(() => {
-    if (!modelUrl) return;
-
-    const loadModel = async () => {
-      try {
-        const loader = new GLTFLoader();
-        loader.load(
-          modelUrl,
-          (gltf) => {
-            const meshes: THREE.Mesh[] = [];
-            gltf.scene.traverse((child: THREE.Object3D) => {
-              if (child instanceof THREE.Mesh) {
-                meshes.push(child);
-              }
-            });
-
-            setModel(gltf.scene);
-            setMeshes(meshes);
-          },
-          undefined,
-          (error) => {
-            console.error('Error loading model:', error);
-            alert('Failed to load model. Please ensure it\'s a valid GLTF/GLB file.');
-          }
-        );
-      } catch (error) {
-        console.error('Error loading model:', error);
-        alert('Failed to load model. Please ensure it\'s a valid GLTF/GLB file.');
+    try {
+      const buffer = await file.arrayBuffer();
+      setModelBuffer(buffer, file.name);
+      await loadModelFromBuffer();
+      
+      if (currentSessionId) {
+        updateSession(currentSessionId, { name: file.name, modelName: file.name });
       }
-    };
-
-    loadModel();
-
-    return () => {
-      if (modelUrl) URL.revokeObjectURL(modelUrl);
-    };
-  }, [modelUrl, setModel, setMeshes]);
+    } catch (error) {
+      console.error('Error reading file:', error);
+      alert('Failed to read file.');
+    }
+  };
 
   return (
     <Card>
@@ -79,7 +51,7 @@ export function ModelUploader() {
           variant={model ? "outline" : "default"}
         >
           <Upload className="mr-2 h-4 w-4" />
-          {model ? 'Change Model' : 'Upload Model'}
+          {model ? `Change Model (${modelName})` : 'Upload Model'}
         </Button>
         {model && (
           <p className="text-sm text-muted-foreground mt-2">

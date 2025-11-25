@@ -52,23 +52,15 @@ export function AnnotationBox({ annotation, isSelected, onSelect, onChange }: An
   }, [x, y, rotation, width, height]);
 
   // Calculate label background width to accommodate text overflow
-  const getLabelWidth = () => {
-    if (textRef.current) {
-      const textWidth = textRef.current.width();
-      const padding = 16; // 8px on each side
-      return Math.max(width, textWidth + padding);
-    }
-    return width;
-  };
-
-  const labelWidth = getLabelWidth();
+  // Not needed anymore since labels use the box width
+  
   
   return (
     <>
-      {/* Main group positioned at top-left, rotation around top-left */}
+      {/* Main group positioned at CENTER for center rotation */}
       <Group
-        x={x}
-        y={y}
+        x={x + width / 2}
+        y={y + height / 2}
         rotation={rotation}
         draggable
         onClick={onSelect}
@@ -79,10 +71,10 @@ export function AnnotationBox({ annotation, isSelected, onSelect, onChange }: An
         onDragEnd={() => {
           const node = rectGroupRef.current;
           if (!node) return;
-          // Direct top-left coordinates
+          // Convert center position back to top-left
           onChange({
-            x: node.x(),
-            y: node.y(),
+            x: node.x() - width / 2,
+            y: node.y() - height / 2,
           });
         }}
         onTransformEnd={() => {
@@ -99,18 +91,8 @@ export function AnnotationBox({ annotation, isSelected, onSelect, onChange }: An
           // Update rectangle dimensions
           rect.width(newWidth);
           rect.height(newHeight);
-
-          // Update label size
-          const labelBg = labelBgRef.current;
-          const labelText = textRef.current;
-          if (labelBg && labelText) {
-            const textWidth = labelText.width();
-            const padding = 16;
-            const newLabelWidth = Math.max(newWidth, textWidth + padding);
-            labelBg.width(newLabelWidth);
-            labelBg.x(-newLabelWidth / 2);
-            labelText.x(0);
-          }
+          rect.offsetX(newWidth / 2);
+          rect.offsetY(newHeight / 2);
 
           // Reset scale
           node.scaleX(1);
@@ -122,10 +104,10 @@ export function AnnotationBox({ annotation, isSelected, onSelect, onChange }: An
             transformerRef.current.getLayer()?.batchDraw();
           }
 
-          // Notify parent with updated attributes (position stays top-left)
+          // Notify parent with updated attributes (convert center to top-left)
           onChange({
-            x: node.x(),
-            y: node.y(),
+            x: node.x() - newWidth / 2,
+            y: node.y() - newHeight / 2,
             width: newWidth,
             height: newHeight,
             rotation: node.rotation(),
@@ -142,45 +124,62 @@ export function AnnotationBox({ annotation, isSelected, onSelect, onChange }: An
           }
         }}
       >
-        {/* Main rectangle */}
+        {/* Main rectangle - centered */}
         <Rect
           ref={rectRef}
+          offsetX={width / 2}
+          offsetY={height / 2}
           width={width}
           height={height}
           stroke={colorTheme.main}
-          strokeWidth={isHovered ? 3 : 2}
-          fill={colorTheme.light}
+          strokeWidth={isSelected ? 3 : (isHovered ? 2.5 : 2)}
+          fill={isHovered ? colorTheme.light + '40' : colorTheme.light}
+          opacity={isHovered || isSelected ? 0.8 : 0.6}
         />
       </Group>
 
-      {/* Label group – positioned at top-left, follows rotation */}
+      {/* Label group – positioned at center, follows rotation */}
       <Group
-        x={x}
-        y={y}
+        x={x + width / 2}
+        y={y + height / 2}
         rotation={rotation}
         ref={labelGroupRef}
         listening={false}
       >
-        {/* Label background centered */}
-        <Rect
-          ref={labelBgRef}
-          x={-labelWidth / 2}
-          y={-22}
-          width={labelWidth}
-          height={22}
-          fill={colorTheme.dark}
-          cornerRadius={[4, 4, 0, 0]}
-        />
-        {/* Label text */}
-        <Text
-          ref={textRef}
-          x={0}
-          y={-18}
-          text={label}
-          fontSize={14}
-          fill="#ffffff"
-          align="center"
-        />
+        {/* Determine if label should be inside or outside based on height */}
+        {(() => {
+          const labelHeight = 22;
+          const isInside = height >= labelHeight + 10; // Need at least 10px padding
+          const labelY = isInside ? (-height / 2) : (-height / 2 - labelHeight);
+          
+          return (
+            <>
+              {/* Label background */}
+              <Rect
+                ref={labelBgRef}
+                offsetX={width / 2}
+                x={0}
+                y={labelY}
+                width={width}
+                height={labelHeight}
+                fill={colorTheme.dark}
+                cornerRadius={isInside ? [0, 0, 0, 0] : [4, 4, 0, 0]}
+              />
+              {/* Label text */}
+              <Text
+                ref={textRef}
+                x={0}
+                y={labelY + 4}
+                text={label}
+                fontSize={14}
+                fill="#ffffff"
+                align="center"
+                width={width}
+                offsetX={width / 2}
+              />
+            </>
+          );
+        })()}
       </Group>
 
       {isSelected && (
@@ -210,7 +209,9 @@ export function AnnotationBox({ annotation, isSelected, onSelect, onChange }: An
  * The canvas coordinate system is pixel space (0‑1024).
  */
 export function renderAnnotationToCanvas(ctx: CanvasRenderingContext2D, ann: Annotation) {
-  const { x, y, width, height, rotation, label } = ann;
+  const { x, y, width, height, rotation, label, color } = ann;
+  const colorTheme = getColorTheme(color);
+  
   ctx.save();
   // Translate to centre for rotation
   ctx.translate(x + width / 2, y + height / 2);
@@ -218,24 +219,31 @@ export function renderAnnotationToCanvas(ctx: CanvasRenderingContext2D, ann: Ann
   ctx.translate(-(x + width / 2), -(y + height / 2));
 
   // Filled rectangle
-  ctx.fillStyle = 'rgba(255, 0, 0, 0.2)';
+  ctx.fillStyle = colorTheme.light;
+  ctx.globalAlpha = 0.6;
   ctx.fillRect(x, y, width, height);
+  ctx.globalAlpha = 1.0;
 
   // Border
-  ctx.strokeStyle = '#ff0000';
+  ctx.strokeStyle = colorTheme.main;
   ctx.lineWidth = 2;
   ctx.strokeRect(x, y, width, height);
 
-  // Label background
+  // Label - place inside if height allows
   const labelHeight = 22;
-  ctx.fillStyle = 'rgba(255, 0, 0, 0.9)';
-  ctx.fillRect(x, y - labelHeight, width, labelHeight);
+  const isInside = height >= labelHeight + 10;
+  const labelY = isInside ? y : y - labelHeight;
+  
+  // Label background
+  ctx.fillStyle = colorTheme.dark;
+  ctx.fillRect(x, labelY, width, labelHeight);
 
   // Label text
   ctx.fillStyle = '#ffffff';
   ctx.font = '14px Arial';
   ctx.textAlign = 'center';
-  ctx.fillText(label, x + width / 2, y - 5);
+  ctx.textBaseline = 'top';
+  ctx.fillText(label, x + width / 2, labelY + 4);
 
   ctx.restore();
 }
