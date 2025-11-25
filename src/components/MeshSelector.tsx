@@ -1,12 +1,12 @@
 import { Box, Layers } from 'lucide-react';
-import { useStore } from '../store/useStore';
+import { useModelStore } from '../store/combinedStores';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { cn } from '../lib/utils';
 
 export function MeshSelector() {
-  const meshes = useStore((state) => state.meshes);
-  const selectedMesh = useStore((state) => state.selectedMesh);
-  const setSelectedMesh = useStore((state) => state.setSelectedMesh);
+  const meshes = useModelStore((state) => state.meshes);
+  const selectedMesh = useModelStore((state) => state.selectedMesh);
+  const setSelectedMesh = useModelStore((state) => state.setSelectedMesh);
 
   if (meshes.length === 0) {
     return (

@@ -1,17 +1,19 @@
 import { useRef, useState } from 'react';
 import { Canvas, ThreeEvent } from '@react-three/fiber';
 import { OrbitControls, Grid, Environment } from '@react-three/drei';
-import { useStore } from '../store/useStore';
+import { useModelStore } from '../store/combinedStores';
+import { useCanvasStore } from '../store/combinedStores';
+import { usePaintStore } from '../store/combinedStores';
 import * as THREE from 'three';
 
 function Scene() {
-  const model = useStore((state) => state.model);
-  const selectedMesh = useStore((state) => state.selectedMesh);
-  const uvTexture = useStore((state) => state.uvTexture);
-  const setSelectedMesh = useStore((state) => state.setSelectedMesh);
-  const isPaintMode = useStore((state) => state.isPaintMode);
-  const addPaintedUVCoord = useStore((state) => state.addPaintedUVCoord);
-  const brushSize = useStore((state) => state.brushSize);
+  const model = useModelStore((state) => state.model);
+  const selectedMesh = useModelStore((state) => state.selectedMesh);
+  const setSelectedMesh = useModelStore((state) => state.setSelectedMesh);
+  const uvTexture = useCanvasStore((state) => state.uvTexture);
+  const isPaintMode = usePaintStore((state) => state.isPaintMode);
+  const addPaintedUVCoord = usePaintStore((state) => state.addPaintedUVCoord);
+  const brushSize = usePaintStore((state) => state.brushSize);
   
   const [paintIndicator, setPaintIndicator] = useState<{ position: THREE.Vector3; normal: THREE.Vector3 } | null>(null);
   const isPaintingRef = useRef(false);
@@ -57,11 +59,11 @@ function Scene() {
   const handlePointerUp = () => {
     if (isPaintingRef.current && isPaintMode) {
       // Auto-create annotation when stopping painting
-      const paintedUVCoords = useStore.getState().paintedUVCoords;
-      if (paintedUVCoords.length > 0) {
-        const createAnnotationFromPaint = useStore.getState().createAnnotationFromPaint;
-        createAnnotationFromPaint();
-      }
+        const paintedUVCoords = usePaintStore.getState().paintedUVCoords;
+        if (paintedUVCoords.length > 0) {
+          const createAnnotationFromPaint = usePaintStore.getState().createAnnotationFromPaint;
+          createAnnotationFromPaint();
+        }
     }
     isPaintingRef.current = false;
   };

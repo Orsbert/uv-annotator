@@ -1,200 +1,22 @@
 import { useEffect, useRef, useState } from 'react';
-import { Stage, Layer, Rect, Transformer, Text, Image as KonvaImage, Group } from 'react-konva';
+import { Stage, Layer, Rect, Image as KonvaImage } from 'react-konva';
 import Konva from 'konva';
-import { useStore } from '../store/useStore';
+import { useAnnotationStore } from '../store/combinedStores';
+import { useCanvasStore } from '../store/combinedStores';
 import type { Annotation } from '../types';
+import { renderAnnotationToKonva } from '../services/annotationRenderer';
 
-interface AnnotationBoxProps {
-  annotation: Annotation;
-  isSelected: boolean;
-  onSelect: () => void;
-  onChange: (newAttrs: Partial<Annotation>) => void;
-}
+// Deprecated AnnotationBoxProps interface removed.
 
-function AnnotationBox({ annotation, isSelected, onSelect, onChange }: AnnotationBoxProps) {
-  const groupRef = useRef<Konva.Group>(null);
-  const transformerRef = useRef<Konva.Transformer>(null);
-  const textRef = useRef<Konva.Text>(null);
-  const [isEditingLabel, setIsEditingLabel] = useState(false);
-
-  // Update transformer whenever annotation or selection changes
-  useEffect(() => {
-    if (isSelected && groupRef.current && transformerRef.current) {
-      transformerRef.current.nodes([groupRef.current]);
-      transformerRef.current.getLayer()?.batchDraw();
-    }
-  }, [isSelected, annotation]);
-
-  const handleLabelDoubleClick = () => {
-    setIsEditingLabel(true);
-
-    // Create a text input element
-    const textNode = textRef.current;
-    if (!textNode) return;
-
-    const stage = textNode.getStage();
-    if (!stage) return;
-
-    const textPosition = textNode.absolutePosition();
-    const stageBox = stage.container().getBoundingClientRect();
-
-    const areaPosition = {
-      x: stageBox.left + textPosition.x,
-      y: stageBox.top + textPosition.y,
-    };
-
-    const textarea = document.createElement('input');
-    document.body.appendChild(textarea);
-
-    textarea.value = annotation.label;
-    textarea.style.position = 'absolute';
-    textarea.style.top = areaPosition.y + 'px';
-    textarea.style.left = areaPosition.x + 'px';
-    textarea.style.minWidth = annotation.width + 'px';
-    textarea.style.fontSize = '14px';
-    textarea.style.border = '2px solid #ff0000';
-    textarea.style.padding = '2px';
-    textarea.style.margin = '0px';
-    textarea.style.overflow = 'hidden';
-    textarea.style.background = 'rgba(255, 0, 0, 0.9)';
-    textarea.style.color = 'white';
-    textarea.style.outline = 'none';
-    textarea.style.resize = 'none';
-    textarea.style.textAlign = 'center';
-
-    textarea.focus();
-    textarea.select();
-
-    const removeTextarea = () => {
-      textarea.parentNode?.removeChild(textarea);
-      setIsEditingLabel(false);
-    };
-
-    textarea.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') {
-        onChange({ label: textarea.value });
-        removeTextarea();
-      }
-      if (e.key === 'Escape') {
-        removeTextarea();
-      }
-    });
-
-    textarea.addEventListener('blur', () => {
-      onChange({ label: textarea.value });
-      removeTextarea();
-    });
-  };
-
-  return (
-    <>
-      <Group
-        ref={groupRef}
-        x={annotation.x + annotation.width / 2}
-        y={annotation.y + annotation.height / 2}
-        offsetX={annotation.width / 2}
-        offsetY={annotation.height / 2}
-        width={annotation.width}
-        height={annotation.height}
-        rotation={annotation.rotation}
-        draggable
-        onClick={onSelect}
-        onTap={onSelect}
-        onDragEnd={(e) => {
-          const newX = e.target.x() - annotation.width / 2;
-          const newY = e.target.y() - annotation.height / 2;
-          onChange({
-            x: newX,
-            y: newY,
-          });
-          // Force transformer update after drag
-          if (transformerRef.current) {
-            transformerRef.current.forceUpdate();
-            transformerRef.current.getLayer()?.batchDraw();
-          }
-        }}
-        onTransformEnd={() => {
-          const node = groupRef.current;
-          if (node) {
-            const scaleX = node.scaleX();
-            const scaleY = node.scaleY();
-
-            node.scaleX(1);
-            node.scaleY(1);
-
-            const newWidth = Math.max(5, annotation.width * scaleX);
-            const newHeight = Math.max(5, annotation.height * scaleY);
-
-            onChange({
-              x: node.x() - newWidth / 2,
-              y: node.y() - newHeight / 2,
-              width: newWidth,
-              height: newHeight,
-              rotation: node.rotation(),
-            });
-          }
-        }}
-      >
-        <Rect
-          width={annotation.width}
-          height={annotation.height}
-          stroke="#ff0000"
-          strokeWidth={2}
-          fill="rgba(255, 0, 0, 0.2)"
-        />
-        <Rect
-          y={-22}
-          width={annotation.width}
-          height={22}
-          fill="rgba(255, 0, 0, 0.9)"
-          cornerRadius={[4, 4, 0, 0]}
-        />
-        <Text
-          ref={textRef}
-          x={annotation.width / 2}
-          y={-18}
-          text={annotation.label}
-          fontSize={14}
-          fill="#ffffff"
-          offsetX={0}
-          align="center"
-          wrap="none"
-          onClick={onSelect}
-          onTap={onSelect}
-          onDblClick={handleLabelDoubleClick}
-          onDblTap={handleLabelDoubleClick}
-        />
-      </Group>
-      {isSelected && (
-        <Transformer
-          ref={transformerRef}
-          rotateEnabled={true}
-          enabledAnchors={[
-            'top-left', 'top-center', 'top-right',
-            'middle-left', 'middle-right',
-            'bottom-left', 'bottom-center', 'bottom-right'
-          ]}
-          boundBoxFunc={(oldBox, newBox) => {
-            // Prevent the box from being too small
-            if (newBox.width < 5 || newBox.height < 5) {
-              return oldBox;
-            }
-            return newBox;
-          }}
-        />
-      )}
-    </>
-  );
-}
 
 export function AnnotationEditor() {
-  const uvCanvas = useStore((state) => state.uvCanvas);
-  const annotations = useStore((state) => state.annotations);
-  const selectedAnnotationId = useStore((state) => state.selectedAnnotationId);
-  const updateAnnotation = useStore((state) => state.updateAnnotation);
-  const setSelectedAnnotationId = useStore((state) => state.setSelectedAnnotationId);
-  const addAnnotation = useStore((state) => state.addAnnotation);
-  const uvTexture = useStore((state) => state.uvTexture);
+  const uvCanvas = useCanvasStore((state) => state.uvCanvas);
+  const uvTexture = useCanvasStore((state) => state.uvTexture);
+  const annotations = useAnnotationStore((state) => state.annotations);
+  const selectedAnnotationId = useAnnotationStore((state) => state.selectedAnnotationId);
+  const updateAnnotation = useAnnotationStore((state) => state.updateAnnotation);
+  const setSelectedAnnotationId = useAnnotationStore((state) => state.setSelectedAnnotationId);
+  const addAnnotation = useAnnotationStore((state) => state.addAnnotation);
   
   const [image, setImage] = useState<HTMLImageElement | null>(null);
   const stageRef = useRef<Konva.Stage>(null);
@@ -259,7 +81,7 @@ export function AnnotationEditor() {
     setSelectedAnnotationId(null);
   };
 
-  const handleMouseMove = (e: any) => {
+  const handleMouseMove = () => {
     if (!isDrawing || !drawStart) return;
 
     const stage = stageRef.current;
@@ -341,17 +163,14 @@ export function AnnotationEditor() {
           <Layer>
             {image && <KonvaImage image={image} />}
             
-            {annotations.map((annotation) => (
-              <AnnotationBox
-                key={annotation.id}
-                annotation={annotation}
-                isSelected={annotation.id === selectedAnnotationId}
-                onSelect={() => setSelectedAnnotationId(annotation.id)}
-                onChange={(newAttrs) => updateAnnotation(annotation.id, newAttrs)}
-              />
-            ))}
-
-            {/* Draw preview rectangle while dragging */}
+            {annotations.map((annotation) =>
+              renderAnnotationToKonva(
+                annotation,
+                annotation.id === selectedAnnotationId,
+                () => setSelectedAnnotationId(annotation.id),
+                (newAttrs) => updateAnnotation(annotation.id, newAttrs)
+              )
+            )}{/* Draw preview rectangle while dragging */}
             {isDrawing && currentRect && (
               <Rect
                 x={currentRect.x}

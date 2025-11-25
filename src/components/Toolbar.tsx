@@ -1,20 +1,24 @@
 import { Download, Sparkles, Keyboard, Paintbrush, Check } from 'lucide-react';
-import { useStore } from '../store/useStore';
+import { useModelStore } from '../store/combinedStores';
+import { useCanvasStore } from '../store/combinedStores';
+import { useAnnotationStore } from '../store/combinedStores';
+import { usePaintStore } from '../store/combinedStores';
 import { Button } from './ui/button';
 import { generateUVLayout } from '../utils/uvGenerator';
 import { useState } from 'react';
 
 export function Toolbar() {
-  const selectedMesh = useStore((state) => state.selectedMesh);
-  const setUVTexture = useStore((state) => state.setUVTexture);
-  const uvCanvas = useStore((state) => state.uvCanvas);
-  const annotations = useStore((state) => state.annotations);
-  const isPaintMode = useStore((state) => state.isPaintMode);
-  const setPaintMode = useStore((state) => state.setPaintMode);
-  const brushSize = useStore((state) => state.brushSize);
-  const setBrushSize = useStore((state) => state.setBrushSize);
-  const createAnnotationFromPaint = useStore((state) => state.createAnnotationFromPaint);
-  const paintedUVCoords = useStore((state) => state.paintedUVCoords);
+  const selectedMesh = useModelStore((state) => state.selectedMesh);
+  const uvCanvas = useCanvasStore((state) => state.uvCanvas);
+  const setUVTexture = useCanvasStore((state) => state.setUVTexture);
+  const setUVCanvas = useCanvasStore((state) => state.setUVCanvas);
+  const annotations = useAnnotationStore((state) => state.annotations);
+  const isPaintMode = usePaintStore((state) => state.isPaintMode);
+  const setPaintMode = usePaintStore((state) => state.setPaintMode);
+  const brushSize = usePaintStore((state) => state.brushSize);
+  const setBrushSize = usePaintStore((state) => state.setBrushSize);
+  const createAnnotationFromPaint = usePaintStore((state) => state.createAnnotationFromPaint);
+  const paintedUVCoords = usePaintStore((state) => state.paintedUVCoords);
   
   const [showShortcuts, setShowShortcuts] = useState(false);
 
@@ -26,7 +30,8 @@ export function Toolbar() {
 
     try {
       const { canvas, texture } = generateUVLayout(selectedMesh);
-      setUVTexture(texture, canvas);
+      setUVTexture(texture);
+      setUVCanvas(canvas);
     } catch (error) {
       console.error('Error generating UV layout:', error);
       alert('Failed to generate UV layout');

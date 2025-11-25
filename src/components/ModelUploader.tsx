@@ -3,14 +3,14 @@ import { GLTFLoader } from 'three-stdlib';
 import * as THREE from 'three';
 import { Upload } from 'lucide-react';
 import { Button } from './ui/button';
-import { useStore } from '../store/useStore';
+import { useModelStore } from '../store/combinedStores';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 
 export function ModelUploader() {
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const setModel = useStore((state) => state.setModel);
-  const setMeshes = useStore((state) => state.setMeshes);
-  const model = useStore((state) => state.model);
+  const setModel = useModelStore((state) => state.setModel);
+  const setMeshes = useModelStore((state) => state.setMeshes);
+  const model = useModelStore((state) => state.model);
   const [modelUrl, setModelUrl] = useState<string | null>(null);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {

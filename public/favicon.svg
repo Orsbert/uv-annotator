@@ -1,0 +1,24 @@
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Isometric Cube Outline -->
+  <path d="M256 64L448 160V352L256 448L64 352V160L256 64Z" stroke="#39FF14" stroke-width="24" stroke-linejoin="round"/>
+  
+  <!-- Inner Edges -->
+  <path d="M256 64V256M256 256L448 160M256 256L64 160" stroke="#39FF14" stroke-width="24" stroke-linejoin="round"/>
+  
+  <!-- Grid Lines (Subtle) -->
+  <path d="M160 112L352 208" stroke="#39FF14" stroke-width="8" stroke-opacity="0.5"/>
+  <path d="M352 112L160 208" stroke="#39FF14" stroke-width="8" stroke-opacity="0.5"/>
+  
+  <path d="M256 448V256" stroke="#39FF14" stroke-width="24" stroke-linejoin="round"/>
+  
+  <!-- Highlight/Glow Effect -->
+  <circle cx="256" cy="256" r="100" fill="#39FF14" fill-opacity="0.1" filter="url(#glow)"/>
+  
+  <defs>
+    <filter id="glow" x="0" y="0" width="512" height="512" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feFlood flood-opacity="0" result="BackgroundImageFix"/>
+      <feBlend mode="normal" in="SourceGraphic" in2="BackgroundImageFix" result="shape"/>
+      <feGaussianBlur stdDeviation="25" result="effect1_foregroundBlur"/>
+    </filter>
+  </defs>
+</svg>
