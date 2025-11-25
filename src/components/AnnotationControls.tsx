@@ -1,4 +1,4 @@
-import { Plus, Trash2 } from 'lucide-react';
+import { Plus, Trash2, Copy } from 'lucide-react';
 import { useAnnotationStore } from '../store/combinedStores';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
@@ -85,6 +85,22 @@ export function AnnotationControls() {
     }
   };
 
+  const handleDuplicateAnnotation = () => {
+    if (!selectedAnnotationId) return;
+    const original = annotations.find(a => a.id === selectedAnnotationId);
+    if (!original) return;
+
+    const duplicate: Annotation = {
+      ...original,
+      id: `ann-${Date.now()}`,
+      x: original.x + 20, // Offset slightly
+      y: original.y + 20,
+      label: original.label + ' (copy)',
+    };
+    addAnnotation(duplicate);
+    setSelectedAnnotationId(duplicate.id);
+  };
+
   return (
     <>
       <Card className="h-full flex flex-col">
@@ -98,24 +114,33 @@ export function AnnotationControls() {
         <CardContent className="flex-1 overflow-auto">
           <div className="space-y-4">
             <div className="flex gap-2">
-              <Button
-                onClick={handleAddAnnotation}
-                className="flex-1"
-                size="sm"
-              >
-                <Plus className="mr-2 h-4 w-4" />
-                Add Annotation
-              </Button>
-              
-              <Button
-                onClick={handleDeleteAnnotation}
-                disabled={!selectedAnnotationId}
-                variant="destructive"
-                size="sm"
-              >
-                <Trash2 className="h-4 w-4" />
-              </Button>
-            </div>
+            <Button
+              onClick={handleAddAnnotation}
+              className="flex-1"
+              size="sm"
+            >
+              <Plus className="mr-2 h-4 w-4" />
+              Add Annotation
+            </Button>
+            
+            <Button
+              onClick={handleDuplicateAnnotation}
+              disabled={!selectedAnnotationId}
+              variant="outline"
+              size="sm"
+            >
+              <Copy className="h-4 w-4" />
+            </Button>
+            
+            <Button
+              onClick={handleDeleteAnnotation}
+              disabled={!selectedAnnotationId}
+              variant="destructive"
+              size="sm"
+            >
+              <Trash2 className="h-4 w-4" />
+            </Button>
+          </div>
 
             <Separator />
 
