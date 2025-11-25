@@ -3,6 +3,7 @@
 import { create } from 'zustand';
 import * as THREE from 'three';
 import type { Annotation } from '../types';
+import { ANNOTATION_COLORS } from '../types';
 
 /** Model Store */
 export interface ModelState {
@@ -138,6 +139,8 @@ export const usePaintStore = create<PaintState>((set, get) => ({
 
     // Create annotation with b${n} naming
     const existingBoxCount = annotations.filter(a => a.label.match(/^b\d+$/)).length;
+    const colorIndex = annotations.length % ANNOTATION_COLORS.length;
+    
     const newAnnotation: Annotation = {
       id: `ann-${Date.now()}`,
       x,
@@ -146,6 +149,7 @@ export const usePaintStore = create<PaintState>((set, get) => ({
       height,
       rotation: 0,
       label: `b${existingBoxCount + 1}`,
+      color: ANNOTATION_COLORS[colorIndex].name,
     };
 
     // Update stores

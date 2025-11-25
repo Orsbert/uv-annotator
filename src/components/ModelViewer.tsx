@@ -141,7 +141,8 @@ function Scene() {
       />
       
       {/* Completely disable OrbitControls in paint mode */}
-      <OrbitControls makeDefault enabled={!isPaintMode} />
+      <OrbitControls makeDefault enabled={!isPaintMode}
+      />
       <Environment preset="studio" />
     </>
   );

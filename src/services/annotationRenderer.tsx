@@ -1,8 +1,9 @@
 // src/services/annotationRenderer.ts
 
 import type { Annotation } from '../types';
+import { getColorTheme } from '../types';
 import { Group, Rect, Text, Transformer } from 'react-konva';
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Konva from 'konva';
 
 interface AnnotationBoxProps {
@@ -17,19 +18,38 @@ interface AnnotationBoxProps {
  * This is a React component that properly uses hooks.
  */
 export function AnnotationBox({ annotation, isSelected, onSelect, onChange }: AnnotationBoxProps) {
-  const { x, y, width, height, rotation, label } = annotation;
-  const outerGroupRef = useRef<Konva.Group>(null);
+  const { x, y, width, height, rotation, label, color } = annotation;
   const rectGroupRef = useRef<Konva.Group>(null);
+  const rectRef = useRef<Konva.Rect>(null);
+  const labelGroupRef = useRef<Konva.Group>(null);
+  const labelBgRef = useRef<Konva.Rect>(null);
   const transformerRef = useRef<Konva.Transformer>(null);
   const textRef = useRef<Konva.Text>(null);
+  const [isHovered, setIsHovered] = useState(false);
 
-  // Attach transformer to the rectangle group only (not the label)
+  // Get color theme
+  const colorTheme = getColorTheme(color);
+
+  // Attach transformer to the rectangle group only
   useEffect(() => {
     if (isSelected && rectGroupRef.current && transformerRef.current) {
       transformerRef.current.nodes([rectGroupRef.current]);
       transformerRef.current.getLayer()?.batchDraw();
     }
-  }, [isSelected, annotation]);
+  }, [isSelected]);
+
+  // Sync label position with rectangle group
+  useEffect(() => {
+    if (rectGroupRef.current && labelGroupRef.current) {
+      const rectGroup = rectGroupRef.current;
+      const labelGroup = labelGroupRef.current;
+      
+      labelGroup.x(rectGroup.x());
+      labelGroup.y(rectGroup.y());
+      labelGroup.rotation(rectGroup.rotation());
+      labelGroup.getLayer()?.batchDraw();
+    }
+  }, [x, y, rotation, width, height]);
 
   // Calculate label background width to accommodate text overflow
   const getLabelWidth = () => {
@@ -45,52 +65,135 @@ export function AnnotationBox({ annotation, isSelected, onSelect, onChange }: An
   
   return (
     <>
-    <Group
-      x={x + width / 2}
-      y={y + height / 2}
-      offsetX={width / 2}
-      offsetY={height / 2}
-      rotation={rotation}
-      draggable
-      onClick={onSelect}
-      onTap={onSelect}
-      ref={outerGroupRef}
-      onDragEnd={(e) => {
-        const newX = e.target.x() - annotation.width / 2;
-        const newY = e.target.y() - annotation.height / 2;
-        onChange({ x: newX, y: newY });
-      }}
-    >
-      {/* Inner group for the main rectangle - this is what the Transformer will attach to */}
-      <Group ref={rectGroupRef}>
-        <Rect width={width} height={height} stroke="#ff0000" strokeWidth={2} fill="rgba(255, 0, 0, 0.2)" />
+      {/* Main rectangle group - this is what gets transformed */}
+      <Group
+        x={x}
+        y={y}
+        rotation={rotation}
+        draggable
+        onClick={onSelect}
+        onTap={onSelect}
+        onMouseEnter={() => setIsHovered(true)}
+        onMouseLeave={() => setIsHovered(false)}
+        ref={rectGroupRef}
+        onDragEnd={() => {
+          const node = rectGroupRef.current;
+          if (!node) return;
+          
+          onChange({ 
+            x: node.x(), 
+            y: node.y() 
+          });
+        }}
+        onTransformEnd={() => {
+          const node = rectGroupRef.current;
+          const rect = rectRef.current;
+          if (!node || !rect) return;
+
+          const scaleX = node.scaleX();
+          const scaleY = node.scaleY();
+
+          const newWidth = Math.max(5, width * scaleX);
+          const newHeight = Math.max(5, height * scaleY);
+
+          // Update rectangle dimensions immediately
+          rect.width(newWidth);
+          rect.height(newHeight);
+
+          // Update label immediately to match new width
+          const labelBg = labelBgRef.current;
+          const labelText = textRef.current;
+          if (labelBg && labelText) {
+            const textWidth = labelText.width();
+            const padding = 16;
+            const newLabelWidth = Math.max(newWidth, textWidth + padding);
+            
+            labelBg.width(newLabelWidth);
+            labelBg.x(newWidth / 2 - newLabelWidth / 2);
+            labelText.x(newWidth / 2);
+          }
+
+          // Reset scale
+          node.scaleX(1);
+          node.scaleY(1);
+
+          // Force transformer to update with new dimensions
+          if (transformerRef.current) {
+            transformerRef.current.forceUpdate();
+            transformerRef.current.getLayer()?.batchDraw();
+          }
+
+          // Now notify parent of the change
+          onChange({
+            x: node.x(),
+            y: node.y(),
+            width: newWidth,
+            height: newHeight,
+            rotation: node.rotation(),
+          });
+        }}
+        onDragMove={() => {
+          // Sync label position during drag
+          const rectGroup = rectGroupRef.current;
+          const labelGroup = labelGroupRef.current;
+          if (rectGroup && labelGroup) {
+            labelGroup.x(rectGroup.x());
+            labelGroup.y(rectGroup.y());
+            labelGroup.rotation(rectGroup.rotation());
+          }
+        }}
+      >
+        {/* Main rectangle */}
+        <Rect
+          ref={rectRef}
+          width={width} 
+          height={height} 
+          stroke={colorTheme.main}
+          strokeWidth={isHovered ? 3 : 2}
+          fill={colorTheme.light}
+        />
       </Group>
-      
-      {/* Label outside the transformed group so it doesn't affect resize handles */}
-      <Rect 
-        x={width / 2 - labelWidth / 2} 
-        y={-22} 
-        width={labelWidth} 
-        height={22} 
-        fill="rgba(255, 0, 0, 0.9)" 
-        cornerRadius={[4, 4, 0, 0]} 
-        listening={false} 
-      />
-      <Text
-        ref={textRef}
-        x={width / 2}
-        y={-18}
-        text={label}
-        fontSize={14}
-        fill="#ffffff"
-        align="center"
+
+      {/* Label group - follows the rectangle but is NOT transformed */}
+      <Group
+        x={x}
+        y={y}
+        rotation={rotation}
+        ref={labelGroupRef}
         listening={false}
-      />
-    </Group>
+      >
+        {/* Label background - centered and extends if text overflows */}
+        <Rect
+          ref={labelBgRef}
+          x={width / 2 - labelWidth / 2} 
+          y={-22} 
+          width={labelWidth} 
+          height={22}
+          fill={colorTheme.dark}
+          cornerRadius={[4, 4, 0, 0]} 
+        />
+        
+        {/* Label text */}
+        <Text
+          ref={textRef}
+          x={width / 2}
+          y={-18}
+          text={label}
+          fontSize={14}
+          fill="#ffffff"
+          align="center"
+          offsetX={textRef.current ? textRef.current.width() / 2 : 0}
+        />
+      </Group>
+
       {isSelected && (
         <Transformer
           ref={transformerRef}
           rotateEnabled={true}
+          anchorSize={8}
+          anchorStroke="#0066ff"
+          anchorStrokeWidth={2}
+          anchorFill="#ffffff"
           enabledAnchors={[
             'top-left', 'top-center', 'top-right',
             'middle-left', 'middle-right',
@@ -102,46 +205,7 @@ export function AnnotationBox({ annotation, isSelected, onSelect, onChange }: An
             }
             return newBox;
           }}
-          onTransform={() => {
-            const node = rectGroupRef.current;
-            if (node) {
-              const scaleX = node.scaleX();
-              
-              // Update the label width to match during transform
-              const outerGroup = outerGroupRef.current;
-              if (outerGroup) {
-                const labelBg = outerGroup.findOne('Rect') as Konva.Rect;
-                const labelText = outerGroup.findOne('Text') as Konva.Text;
-                if (labelBg && labelText) {
-                  const newWidth = annotation.width * scaleX;
-                  labelBg.width(newWidth);
-                  labelText.x(newWidth / 2);
-                }
-              }
-            }
-          }}
-          onTransformEnd={() => {
-            const node = rectGroupRef.current;
-            if (node) {
-              const scaleX = node.scaleX();
-              const scaleY = node.scaleY();
-              node.scaleX(1);
-              node.scaleY(1);
-              const newWidth = Math.max(5, annotation.width * scaleX);
-              const newHeight = Math.max(5, annotation.height * scaleY);
-              
-              const outerGroup = outerGroupRef.current;
-              if (outerGroup) {
-                onChange({
-                  x: outerGroup.x() - newWidth / 2,
-                  y: outerGroup.y() - newHeight / 2,
-                  width: newWidth,
-                  height: newHeight,
-                  rotation: outerGroup.rotation(),
-                });
-              }
-            }
-          }}
+          ignoreStroke={true}
         />
       )}
     </>

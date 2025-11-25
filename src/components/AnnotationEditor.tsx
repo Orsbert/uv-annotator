@@ -4,6 +4,7 @@ import Konva from 'konva';
 import { useAnnotationStore } from '../store/combinedStores';
 import { useCanvasStore } from '../store/combinedStores';
 import type { Annotation } from '../types';
+import { ANNOTATION_COLORS } from '../types';
 import { AnnotationBox } from '../services/annotationRenderer';
 
 // Deprecated AnnotationBoxProps interface removed.
@@ -17,6 +18,7 @@ export function AnnotationEditor() {
   const updateAnnotation = useAnnotationStore((state) => state.updateAnnotation);
   const setSelectedAnnotationId = useAnnotationStore((state) => state.setSelectedAnnotationId);
   const addAnnotation = useAnnotationStore((state) => state.addAnnotation);
+  const setPendingLabelEdit = useAnnotationStore((state) => state.setPendingLabelEdit);
   
   const [image, setImage] = useState<HTMLImageElement | null>(null);
   const stageRef = useRef<Konva.Stage>(null);
@@ -111,6 +113,12 @@ export function AnnotationEditor() {
 
     // Only create annotation if the box has some size (at least 10x10)
     if (currentRect.width > 10 && currentRect.height > 10) {
+      // Count existing boxes with bN pattern to generate next number
+      const existingBoxCount = annotations.filter(a => a.label.match(/^b\d+$/)).length;
+      
+      // Assign color based on total annotation count (cycles through 8 colors)
+      const colorIndex = annotations.length % ANNOTATION_COLORS.length;
+      
       const newAnnotation: Annotation = {
         id: `ann-${Date.now()}`,
         x: currentRect.x,
@@ -118,9 +126,13 @@ export function AnnotationEditor() {
         width: currentRect.width,
         height: currentRect.height,
         rotation: 0,
-        label: 'New Annotation',
+        label: `b${existingBoxCount + 1}`,
+        color: ANNOTATION_COLORS[colorIndex].name,
       };
       addAnnotation(newAnnotation);
+      
+      // Trigger label edit dialog (same as 3D paint flow)
+      setPendingLabelEdit(newAnnotation.id);
     }
 
     setIsDrawing(false);

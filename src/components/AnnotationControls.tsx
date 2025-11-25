@@ -1,22 +1,23 @@
 import { Plus, Trash2 } from 'lucide-react';
-import { useStore } from '../store/useStore';
+import { useAnnotationStore } from '../store/combinedStores';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Separator } from './ui/separator';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from './ui/dialog';
 import type { Annotation } from '../types';
+import { ANNOTATION_COLORS } from '../types';
 import { useState, useEffect } from 'react';
 
 export function AnnotationControls() {
-  const annotations = useStore((state) => state.annotations);
-  const selectedAnnotationId = useStore((state) => state.selectedAnnotationId);
-  const pendingLabelEdit = useStore((state) => state.pendingLabelEdit);
-  const addAnnotation = useStore((state) => state.addAnnotation);
-  const updateAnnotation = useStore((state) => state.updateAnnotation);
-  const deleteAnnotation = useStore((state) => state.deleteAnnotation);
-  const setSelectedAnnotationId = useStore((state) => state.setSelectedAnnotationId);
-  const setPendingLabelEdit = useStore((state) => state.setPendingLabelEdit);
+  const annotations = useAnnotationStore((state) => state.annotations);
+  const selectedAnnotationId = useAnnotationStore((state) => state.selectedAnnotationId);
+  const pendingLabelEdit = useAnnotationStore((state) => state.pendingLabelEdit);
+  const addAnnotation = useAnnotationStore((state) => state.addAnnotation);
+  const updateAnnotation = useAnnotationStore((state) => state.updateAnnotation);
+  const deleteAnnotation = useAnnotationStore((state) => state.deleteAnnotation);
+  const setSelectedAnnotationId = useAnnotationStore((state) => state.setSelectedAnnotationId);
+  const setPendingLabelEdit = useAnnotationStore((state) => state.setPendingLabelEdit);
 
   const selectedAnnotation = annotations.find((ann) => ann.id === selectedAnnotationId);
   const [labelDialogValue, setLabelDialogValue] = useState('');
@@ -33,6 +34,8 @@ export function AnnotationControls() {
 
   const handleAddAnnotation = () => {
     const existingBoxCount = annotations.filter(a => a.label.match(/^b\d+$/)).length;
+    const colorIndex = annotations.length % ANNOTATION_COLORS.length;
+    
     const newAnnotation: Annotation = {
       id: `ann-${Date.now()}`,
       x: 100 + Math.random() * 200,
@@ -41,6 +44,7 @@ export function AnnotationControls() {
       height: 150,
       rotation: 0,
       label: `b${existingBoxCount + 1}`,
+      color: ANNOTATION_COLORS[colorIndex].name,
     };
     addAnnotation(newAnnotation);
     setPendingLabelEdit(newAnnotation.id);
@@ -61,6 +65,14 @@ export function AnnotationControls() {
   const handleLabelDialogSubmit = () => {
     if (pendingLabelEdit && labelDialogValue.trim()) {
       updateAnnotation(pendingLabelEdit, { label: labelDialogValue.trim() });
+    }
+    setPendingLabelEdit(null);
+  };
+
+  const handleLabelDialogCancel = () => {
+    // If user cancels, delete the annotation that was just created
+    if (pendingLabelEdit) {
+      deleteAnnotation(pendingLabelEdit);
     }
     setPendingLabelEdit(null);
   };
@@ -202,7 +214,7 @@ export function AnnotationControls() {
         </CardContent>
       </Card>
 
-      <Dialog open={!!pendingLabelEdit} onOpenChange={(open) => !open && setPendingLabelEdit(null)}>
+      <Dialog open={!!pendingLabelEdit} onOpenChange={(open) => !open && handleLabelDialogCancel()}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Enter Label</DialogTitle>
@@ -213,13 +225,15 @@ export function AnnotationControls() {
             onKeyDown={(e) => {
               if (e.key === 'Enter') {
                 handleLabelDialogSubmit();
+              } else if (e.key === 'Escape') {
+                handleLabelDialogCancel();
               }
             }}
             placeholder="Enter annotation label"
             autoFocus
           />
           <div className="flex justify-end gap-2 mt-4">
-            <Button variant="outline" onClick={() => setPendingLabelEdit(null)}>
+            <Button variant="outline" onClick={handleLabelDialogCancel}>
               Cancel
             </Button>
             <Button onClick={handleLabelDialogSubmit}>
