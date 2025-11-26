@@ -1,10 +1,56 @@
-import { useRef, useState } from 'react';
-import { Canvas, ThreeEvent } from '@react-three/fiber';
+import { useRef, useState, useEffect } from 'react';
+import { Canvas, ThreeEvent, useThree } from '@react-three/fiber';
 import { OrbitControls, Grid, Environment } from '@react-three/drei';
 import { useModelStore } from '../store/combinedStores';
 import { useCanvasStore } from '../store/combinedStores';
 import { usePaintStore } from '../store/combinedStores';
+import { useSessionStore } from '../store/useSessionStore';
 import * as THREE from 'three';
+import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib';
+
+function CameraController() {
+  const { camera } = useThree();
+  const controlsRef = useRef<OrbitControlsImpl>(null);
+  const currentSessionId = useSessionStore((state) => state.currentSessionId);
+  const updateSession = useSessionStore((state) => state.updateSession);
+  const sessions = useSessionStore((state) => state.sessions);
+  const isPaintMode = usePaintStore((state) => state.isPaintMode);
+
+  // Restore camera state on mount or session change
+  useEffect(() => {
+    if (!currentSessionId || !controlsRef.current) return;
+    
+    const session = sessions.find(s => s.id === currentSessionId);
+    if (session?.cameraState) {
+      camera.position.fromArray(session.cameraState.position);
+      controlsRef.current.target.fromArray(session.cameraState.target);
+      controlsRef.current.update();
+    }
+  }, [currentSessionId, camera, sessions]);
+
+  // Save camera state when interaction ends
+  const handleEnd = () => {
+    if (!currentSessionId || !controlsRef.current || isPaintMode) return;
+
+    const position = camera.position.toArray() as [number, number, number];
+    const target = controlsRef.current.target.toArray() as [number, number, number];
+
+    updateSession(currentSessionId, {
+        cameraState: { position, target }
+    });
+  };
+
+  return (
+    <OrbitControls 
+      ref={controlsRef}
+      makeDefault 
+      enabled={!isPaintMode}
+      onEnd={handleEnd}
+      enableDamping={true}
+      dampingFactor={0.05}
+    />
+  );
+}
 
 function Scene() {
   const model = useModelStore((state) => state.model);
@@ -80,11 +126,14 @@ function Scene() {
   };
 
   const handleMeshClick = (e: ThreeEvent<MouseEvent>) => {
+    console.log('Mesh clicked:', e.object.name);
     if (isPaintMode) {
       handlePaint(e as any);
     } else {
       e.stopPropagation();
+      // e.nativeEvent.stopImmediatePropagation(); // Sometimes needed if other handlers interfere
       if (e.object instanceof THREE.Mesh) {
+        console.log('Setting selected mesh:', e.object.name);
         setSelectedMesh(e.object);
       }
     }
@@ -140,9 +189,7 @@ function Scene() {
         fadeDistance={30} 
       />
       
-      {/* Completely disable OrbitControls in paint mode */}
-      <OrbitControls makeDefault enabled={!isPaintMode}
-      />
+      <CameraController />
       <Environment preset="studio" />
     </>
   );

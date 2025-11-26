@@ -1,12 +1,18 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 
+export interface CameraState {
+  position: [number, number, number];
+  target: [number, number, number];
+}
+
 export interface SessionMetadata {
   id: string;
   name: string;
   lastModified: number;
   thumbnail?: string; // Data URL
   modelName?: string;
+  cameraState?: CameraState;
 }
 
 interface SessionState {

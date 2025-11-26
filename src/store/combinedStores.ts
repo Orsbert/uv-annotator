@@ -51,9 +51,14 @@ export const useModelStore = create<ModelState>()(
       setModel: (model) => set({ model }),
       setMeshes: (meshes) => set({ meshes }),
       setSelectedMesh: (mesh) => set({ selectedMesh: mesh, selectedMeshName: mesh?.name || null }),
-      setModelBuffer: (buffer, name) => set({ modelBuffer: buffer, modelName: name }),
+      setModelBuffer: (buffer, name) => {
+        console.log('setModelBuffer called. Name:', name, 'Size:', buffer?.byteLength);
+        set({ modelBuffer: buffer, modelName: name });
+      },
       loadModelFromBuffer: async () => {
         const { modelBuffer } = get();
+        console.log('loadModelFromBuffer called. Buffer exists:', !!modelBuffer, 'Size:', modelBuffer instanceof ArrayBuffer ? modelBuffer.byteLength : 'N/A');
+        
         if (!modelBuffer || !(modelBuffer instanceof ArrayBuffer)) {
             if (modelBuffer) console.warn('Invalid model buffer found in store');
             return;

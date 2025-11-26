@@ -1,4 +1,4 @@
-import { Download, Sparkles, Keyboard, Paintbrush, Check, Menu } from 'lucide-react';
+import { Download, Sparkles, Keyboard, Paintbrush, Check, Menu, Upload } from 'lucide-react';
 import { useModelStore } from '../store/combinedStores';
 import { useCanvasStore } from '../store/combinedStores';
 import { useAnnotationStore } from '../store/combinedStores';
@@ -8,7 +8,11 @@ import { Button } from './ui/button';
 import { generateUVLayout } from '../utils/uvGenerator';
 import { useState } from 'react';
 
-export function Toolbar() {
+interface ToolbarProps {
+  onToggleSidebar: () => void;
+}
+
+export function Toolbar({ onToggleSidebar }: ToolbarProps) {
   const selectedMesh = useModelStore((state) => state.selectedMesh);
   const uvCanvas = useCanvasStore((state) => state.uvCanvas);
   const setUVTexture = useCanvasStore((state) => state.setUVTexture);
@@ -21,54 +25,14 @@ export function Toolbar() {
   const createAnnotationFromPaint = usePaintStore((state) => state.createAnnotationFromPaint);
   const paintedUVCoords = usePaintStore((state) => state.paintedUVCoords);
   
-  const setSidebarOpen = useSessionStore((state) => state.setSidebarOpen);
   const currentSessionId = useSessionStore((state) => state.currentSessionId);
-  const updateSession = useSessionStore((state) => state.updateSession);
+
   const sessions = useSessionStore((state) => state.sessions);
   const currentSession = sessions.find(s => s.id === currentSessionId);
   
   const [showShortcuts, setShowShortcuts] = useState(false);
 
-  const handleOpenSidebar = () => {
-    // Capture thumbnail before opening sidebar
-    if (uvCanvas && currentSessionId) {
-      // Create a small thumbnail
-      const thumbCanvas = document.createElement('canvas');
-      thumbCanvas.width = 200;
-      thumbCanvas.height = 200;
-      const ctx = thumbCanvas.getContext('2d');
-      if (ctx) {
-        // Draw white background
-        ctx.fillStyle = '#ffffff';
-        ctx.fillRect(0, 0, 200, 200);
-        
-        // Draw UV canvas scaled down
-        ctx.drawImage(uvCanvas, 0, 0, 200, 200);
-        
-        // Draw annotations
-        annotations.forEach((ann) => {
-            // Scale annotation coordinates
-            const scaleX = 200 / uvCanvas.width;
-            const scaleY = 200 / uvCanvas.height;
-            
-            ctx.save();
-            ctx.translate((ann.x + ann.width / 2) * scaleX, (ann.y + ann.height / 2) * scaleY);
-            ctx.rotate((ann.rotation * Math.PI) / 180);
-            ctx.translate(-((ann.x + ann.width / 2) * scaleX), -((ann.y + ann.height / 2) * scaleY));
-            
-            ctx.strokeStyle = '#ff0000';
-            ctx.lineWidth = 1;
-            ctx.strokeRect(ann.x * scaleX, ann.y * scaleY, ann.width * scaleX, ann.height * scaleY);
-            
-            ctx.restore();
-        });
 
-        const dataUrl = thumbCanvas.toDataURL('image/jpeg', 0.7);
-        updateSession(currentSessionId, { thumbnail: dataUrl });
-      }
-    }
-    setSidebarOpen(true);
-  };
 
   const handleGenerateUV = () => {
     if (!selectedMesh) {
@@ -155,7 +119,7 @@ export function Toolbar() {
   return (
     <div className="h-16 border-b bg-card px-4 flex items-center justify-between">
       <div className="flex items-center gap-2">
-        <Button variant="ghost" size="icon" onClick={handleOpenSidebar}>
+        <Button variant="ghost" size="icon" onClick={onToggleSidebar}>
           <Menu className="w-5 h-5" />
         </Button>
         <h1 className="text-xl font-bold">UV Annotator</h1>
@@ -167,6 +131,38 @@ export function Toolbar() {
       </div>
       
       <div className="flex items-center gap-2">
+        <input
+          type="file"
+          id="model-upload"
+          accept=".gltf,.glb"
+          className="hidden"
+          onChange={async (e) => {
+            const file = e.target.files?.[0];
+            if (!file) return;
+
+            try {
+              const buffer = await file.arrayBuffer();
+              useModelStore.getState().setModelBuffer(buffer, file.name);
+              await useModelStore.getState().loadModelFromBuffer();
+              
+              if (currentSessionId) {
+                useSessionStore.getState().updateSession(currentSessionId, { name: file.name, modelName: file.name });
+              }
+            } catch (error) {
+              console.error('Error reading file:', error);
+              alert('Failed to read file.');
+            }
+          }}
+        />
+        <Button
+          onClick={() => document.getElementById('model-upload')?.click()}
+          variant="outline"
+          title="Upload Model"
+        >
+          <Upload className="mr-2 h-4 w-4" />
+          Upload Model
+        </Button>
+
         {isPaintMode && (
           <>
             <div className="flex items-center gap-2 px-3 py-1 bg-muted rounded">

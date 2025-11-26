@@ -4,11 +4,15 @@ import { createNewSession, loadSession, deleteSession } from '../services/sessio
 import { Button } from './ui/button';
 import { cn } from '../lib/utils';
 
-export function SessionSidebar() {
+interface SessionSidebarProps {
+  isOpen: boolean;
+  onClose: () => void;
+}
+
+export function SessionSidebar({ isOpen, onClose }: SessionSidebarProps) {
   const sessions = useSessionStore((state) => state.sessions);
   const currentSessionId = useSessionStore((state) => state.currentSessionId);
-  const isSidebarOpen = useSessionStore((state) => state.isSidebarOpen);
-  const setSidebarOpen = useSessionStore((state) => state.setSidebarOpen);
+
   const updateSession = useSessionStore((state) => state.updateSession);
 
   // Close sidebar when clicking outside (optional, for now just X button)
@@ -37,24 +41,24 @@ export function SessionSidebar() {
   return (
     <>
       {/* Overlay */}
-      {isSidebarOpen && (
+      {isOpen && (
         <div 
           className="fixed inset-0 bg-black/50 z-40"
-          onClick={() => setSidebarOpen(false)}
+          onClick={onClose}
         />
       )}
 
       {/* Sidebar */}
       <div className={cn(
         "fixed top-0 left-0 h-full w-80 bg-background border-r shadow-xl z-50 transition-transform duration-300 ease-in-out transform",
-        isSidebarOpen ? "translate-x-0" : "-translate-x-full"
+        isOpen ? "translate-x-0" : "-translate-x-full"
       )}>
         <div className="p-4 border-b flex items-center justify-between bg-muted/30">
           <h2 className="font-semibold text-lg flex items-center gap-2">
             <FolderOpen className="w-5 h-5" />
             Projects
           </h2>
-          <Button variant="ghost" size="icon" onClick={() => setSidebarOpen(false)}>
+          <Button variant="ghost" size="icon" onClick={onClose}>
             <X className="w-5 h-5" />
           </Button>
         </div>
