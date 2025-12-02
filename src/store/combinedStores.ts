@@ -274,6 +274,7 @@ export const usePaintStore = create<PaintState>()(
         const padding = 10;
         const x = Math.max(0, minX - padding);
         const y = Math.max(0, minY - padding);
+        // Calculate top-left coordinates
         const width = Math.min(uvCanvas.width - x, maxX - minX + padding * 2);
         const height = Math.min(uvCanvas.height - y, maxY - minY + padding * 2);
 

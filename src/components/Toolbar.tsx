@@ -89,16 +89,24 @@ export function Toolbar({ onToggleSidebar }: ToolbarProps) {
       ctx.lineWidth = 2;
       ctx.strokeRect(ann.x, ann.y, ann.width, ann.height);
       
-      // Draw label background
-      ctx.fillStyle = 'rgba(255, 0, 0, 0.8)';
-      const labelHeight = 20;
-      ctx.fillRect(ann.x, ann.y - labelHeight, ann.width, labelHeight);
+      // Draw label inside box at top-left with padding
+      const fontSize = 8;
+      const padding = 4;
       
-      // Draw label text
+      // Draw shadow
+      ctx.fillStyle = '#000000';
+      ctx.font = `${fontSize}px Arial`;
+      ctx.textAlign = 'left';
+      ctx.globalAlpha = 0.8;
+      ctx.fillText(ann.label, ann.x + padding - 1, ann.y + padding + 1);
+      ctx.fillText(ann.label, ann.x + padding + 1, ann.y + padding + 1);
+      ctx.fillText(ann.label, ann.x + padding - 1, ann.y + padding - 1);
+      ctx.fillText(ann.label, ann.x + padding + 1, ann.y + padding - 1);
+      ctx.globalAlpha = 1;
+      
+      // Draw white text
       ctx.fillStyle = '#ffffff';
-      ctx.font = '14px Arial';
-      ctx.textAlign = 'center';
-      ctx.fillText(ann.label, ann.x + ann.width / 2, ann.y - 5);
+      ctx.fillText(ann.label, ann.x + padding, ann.y + padding);
 
       
       ctx.restore();

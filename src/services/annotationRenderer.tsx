@@ -22,7 +22,6 @@ export function AnnotationBox({ annotation, isSelected, onSelect, onChange }: An
   const rectGroupRef = useRef<Konva.Group>(null);
   const rectRef = useRef<Konva.Rect>(null);
   const labelGroupRef = useRef<Konva.Group>(null);
-  const labelBgRef = useRef<Konva.Rect>(null);
   const transformerRef = useRef<Konva.Transformer>(null);
   const textRef = useRef<Konva.Text>(null);
   const [isHovered, setIsHovered] = useState(false);
@@ -146,38 +145,25 @@ export function AnnotationBox({ annotation, isSelected, onSelect, onChange }: An
         ref={labelGroupRef}
         listening={false}
       >
-        {/* Determine if label should be inside or outside based on height */}
-        {(() => {
-          const labelHeight = 22;
-          const isInside = height >= labelHeight + 10; // Need at least 10px padding
-          const labelY = isInside ? (-height / 2) : (-height / 2 - labelHeight);
+        {/* Label text inside box at top-left - shown on hover/select */}
+        {(isHovered || isSelected) && (() => {
+          const fontSize = 8;
+          const padding = 4;
           
           return (
-            <>
-              {/* Label background */}
-              <Rect
-                ref={labelBgRef}
-                offsetX={width / 2}
-                x={0}
-                y={labelY}
-                width={width}
-                height={labelHeight}
-                fill={colorTheme.dark}
-                cornerRadius={isInside ? [0, 0, 0, 0] : [4, 4, 0, 0]}
-              />
-              {/* Label text */}
-              <Text
-                ref={textRef}
-                x={0}
-                y={labelY + 4}
-                text={label}
-                fontSize={14}
-                fill="#ffffff"
-                align="center"
-                width={width}
-                offsetX={width / 2}
-              />
-            </>
+            <Text
+              ref={textRef}
+              x={-width / 2 + padding}
+              y={-height / 2 + padding}
+              text={label}
+              fontSize={fontSize}
+              fill="#ffffff"
+              align="left"
+              shadowColor="#000000"
+              shadowBlur={3}
+              shadowOffset={{ x: 0, y: 0 }}
+              shadowOpacity={1}
+            />
           );
         })()}
       </Group>
@@ -213,6 +199,7 @@ export function renderAnnotationToCanvas(ctx: CanvasRenderingContext2D, ann: Ann
   const colorTheme = getColorTheme(color);
   
   ctx.save();
+  ctx.save();
   // Translate to centre for rotation
   ctx.translate(x + width / 2, y + height / 2);
   ctx.rotate((rotation * Math.PI) / 180);
@@ -229,21 +216,26 @@ export function renderAnnotationToCanvas(ctx: CanvasRenderingContext2D, ann: Ann
   ctx.lineWidth = 2;
   ctx.strokeRect(x, y, width, height);
 
-  // Label - place inside if height allows
-  const labelHeight = 22;
-  const isInside = height >= labelHeight + 10;
-  const labelY = isInside ? y : y - labelHeight;
-  
-  // Label background
-  ctx.fillStyle = colorTheme.dark;
-  ctx.fillRect(x, labelY, width, labelHeight);
+  // Label inside box at top-left with padding
+  const fontSize = 8;
+  const padding = 4;
 
-  // Label text
-  ctx.fillStyle = '#ffffff';
-  ctx.font = '14px Arial';
-  ctx.textAlign = 'center';
+  // Draw shadow first
+  ctx.fillStyle = '#000000';
+  ctx.font = `${fontSize}px Arial`;
+  ctx.textAlign = 'left';
   ctx.textBaseline = 'top';
-  ctx.fillText(label, x + width / 2, labelY + 4);
+  // Draw shadow in multiple directions for blur effect
+  ctx.globalAlpha = 0.8;
+  ctx.fillText(label, x + padding - 1, y + padding + 1);
+  ctx.fillText(label, x + padding + 1, y + padding + 1);
+  ctx.fillText(label, x + padding - 1, y + padding - 1);
+  ctx.fillText(label, x + padding + 1, y + padding - 1);
+  ctx.globalAlpha = 1;
+  
+  // Draw white text on top
+  ctx.fillStyle = '#ffffff';
+  ctx.fillText(label, x + padding, y + padding);
 
   ctx.restore();
 }

@@ -2,8 +2,8 @@ import * as THREE from 'three';
 
 export interface Annotation {
   id: string;
-  x: number;
-  y: number;
+  x: number; // Top-left X
+  y: number; // Top-left Y
   width: number;
   height: number;
   rotation: number;
