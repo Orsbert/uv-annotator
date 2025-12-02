@@ -186,6 +186,7 @@ export const useStore = create<AppState>((set, get) => ({
       height,
       rotation: 0,
       label: `b${existingBoxCount + 1}`,
+      color: 'coral',
     };
     
     set((state) => ({

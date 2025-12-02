@@ -31,6 +31,7 @@ export function useKeyboardShortcuts() {
           height: 150,
           rotation: 0,
           label: 'New Annotation',
+          color: 'coral',
         };
         addAnnotation(newAnnotation);
       }

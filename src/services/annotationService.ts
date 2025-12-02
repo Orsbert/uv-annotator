@@ -31,5 +31,5 @@ export function createAnnotationFromPaint(
   const y = Math.max(0, minY - padding);
   const width = Math.min(canvasWidth - x, maxX - minX + padding * 2);
   const height = Math.min(canvasHeight - y, maxY - minY + padding * 2);
-  return { x, y, width, height, rotation: 0 };
+  return { x, y, width, height, rotation: 0, color: 'coral' };
 }
