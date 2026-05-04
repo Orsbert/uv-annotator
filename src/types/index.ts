@@ -9,6 +9,7 @@ export interface Annotation {
   rotation: number;
   label: string;
   color: string; // Theme color name
+  visible: boolean;
 }
 
 export interface ModelData {

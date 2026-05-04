@@ -1,12 +1,13 @@
-import { useEffect, useRef, useState } from 'react';
-import { Stage, Layer, Rect, Image as KonvaImage } from 'react-konva';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Stage, Layer, Rect, Image as KonvaImage, Transformer } from 'react-konva';
 import Konva from 'konva';
 import { Plus, Minus, Maximize2 } from 'lucide-react';
-import { useAnnotationStore, useModelStore } from '../store/combinedStores';
+import { useAnnotationStore, useModelStore, useOverlayStore } from '../store/combinedStores';
 import { useCanvasStore } from '../store/combinedStores';
 import type { Annotation } from '../types';
 import { ANNOTATION_COLORS } from '../types';
-import { AnnotationBox } from '../services/annotationRenderer';
+import { AnnotationBox, renderAnnotationsToCanvas, renderOverlaysToCanvas } from '../services/annotationRenderer';
+import { generateUVLayout } from '../utils/uvGenerator';
 import { Button } from './ui/button';
 
 // Deprecated AnnotationBoxProps interface removed.
@@ -15,6 +16,7 @@ import { Button } from './ui/button';
 export function AnnotationEditor() {
   const uvCanvas = useCanvasStore((state) => state.uvCanvas);
   const uvTexture = useCanvasStore((state) => state.uvTexture);
+  const canvasSize = useCanvasStore((state) => state.canvasSize);
   const annotations = useAnnotationStore((state) => state.annotations);
   const selectedAnnotationId = useAnnotationStore((state) => state.selectedAnnotationId);
   const updateAnnotation = useAnnotationStore((state) => state.updateAnnotation);
@@ -22,10 +24,15 @@ export function AnnotationEditor() {
   const addAnnotation = useAnnotationStore((state) => state.addAnnotation);
   const setPendingLabelEdit = useAnnotationStore((state) => state.setPendingLabelEdit);
   const selectedMesh = useModelStore((state) => state.selectedMesh);
-  
+
+  const overlays = useOverlayStore((state) => state.overlays);
+  const updateOverlay = useOverlayStore((state) => state.updateOverlay);
+
   const [image, setImage] = useState<HTMLImageElement | null>(null);
   const stageRef = useRef<Konva.Stage>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const overlayRefs = useRef<Map<string, Konva.Image>>(new Map());
+  const overlayTransformerRef = useRef<Konva.Transformer>(null);
   
   // Drawing state
   const [isDrawing, setIsDrawing] = useState(false);
@@ -43,6 +50,13 @@ export function AnnotationEditor() {
   const minScale = 0.1;
   const maxScale = 10;
 
+  // Cache wireframe canvas -- only regenerate when mesh or canvasSize changes
+  const wireframeCanvas = useMemo(() => {
+    if (!selectedMesh) return null;
+    const { canvas } = generateUVLayout(selectedMesh, canvasSize);
+    return canvas;
+  }, [selectedMesh, canvasSize]);
+
   // Load the UV canvas as an image for Konva
   useEffect(() => {
     if (uvCanvas) {
@@ -54,31 +68,25 @@ export function AnnotationEditor() {
     }
   }, [uvCanvas]);
 
-  // Update texture when annotations change
+  // Update 3D texture when annotations or overlays change
   useEffect(() => {
-    if (uvTexture && uvCanvas) {
-      // Redraw canvas with annotations
-      const ctx = uvCanvas.getContext('2d');
-      if (ctx && selectedMesh) {
-        // Need to import these dynamically
-        import('../utils/uvGenerator').then(({ generateUVLayout }) => {
-          // Regenerate clean UV layout
-          const { canvas: newCanvas } = generateUVLayout(selectedMesh);
-          ctx.clearRect(0, 0, uvCanvas.width, uvCanvas.height);
-          ctx.drawImage(newCanvas, 0, 0);
-          
-          // Draw annotations
-          import('../services/annotationRenderer').then(({ renderAnnotationsToCanvas }) => {
-            const currentAnnotations = useAnnotationStore.getState().annotations;
-            renderAnnotationsToCanvas(ctx, currentAnnotations);
-            
-            // Force texture update
-            uvTexture.needsUpdate = true;
-          });
-        });
-      }
-    }
-  }, [annotations, uvTexture, uvCanvas, selectedMesh]);
+    if (!uvTexture || !uvCanvas || !wireframeCanvas) return;
+    const ctx = uvCanvas.getContext('2d');
+    if (!ctx) return;
+
+    // 1. Draw clean wireframe base
+    ctx.clearRect(0, 0, uvCanvas.width, uvCanvas.height);
+    ctx.drawImage(wireframeCanvas, 0, 0);
+
+    // 2. Draw visible overlays
+    renderOverlaysToCanvas(ctx, overlays);
+
+    // 3. Draw annotations on top
+    renderAnnotationsToCanvas(ctx, useAnnotationStore.getState().annotations);
+
+    // 4. Force texture update on 3D model
+    uvTexture.needsUpdate = true;
+  }, [annotations, overlays, uvTexture, uvCanvas, wireframeCanvas]);
 
   // Measure container size and handle resize
   useEffect(() => {
@@ -95,6 +103,18 @@ export function AnnotationEditor() {
     return () => window.removeEventListener('resize', updateSize);
   }, [uvCanvas]); // Re-measure when uvCanvas changes
 
+  // Attach transformer to any overlay in edit mode
+  const editingOverlay = overlays.find((o) => o.editMode && o.visible);
+  useEffect(() => {
+    if (editingOverlay && overlayTransformerRef.current) {
+      const node = overlayRefs.current.get(editingOverlay.id);
+      if (node) {
+        overlayTransformerRef.current.nodes([node]);
+        overlayTransformerRef.current.getLayer()?.batchDraw();
+      }
+    }
+  }, [editingOverlay?.id, overlays]);
+
   const handleMouseDown = (e: any) => {
     const stage = stageRef.current;
     if (!stage) return;
@@ -107,10 +127,10 @@ export function AnnotationEditor() {
     const pointer = stage.getPointerPosition();
     if (!pointer) return;
 
-    // Check if spacebar is held (common pan shortcut) or just regular click for pan
-    const shouldPan = true; // For now, background click = pan
-    
-    if (shouldPan) {
+    // Middle-click or right-click = pan, left-click = draw
+    const isMiddleOrRight = e.evt.button === 1 || e.evt.button === 2;
+
+    if (isMiddleOrRight) {
       setIsPanning(true);
       setPanStart(pointer);
     } else {
@@ -120,7 +140,7 @@ export function AnnotationEditor() {
       setDrawStart(pos);
       setCurrentRect({ x: pos.x, y: pos.y, width: 0, height: 0 });
     }
-    
+
     setSelectedAnnotationId(null);
   };
 
@@ -189,9 +209,10 @@ export function AnnotationEditor() {
         rotation: 0,
         label: `b${existingBoxCount + 1}`,
         color: ANNOTATION_COLORS[colorIndex].name,
+        visible: true,
       };
       addAnnotation(newAnnotation);
-      
+
       // Trigger label edit dialog (same as 3D paint flow)
       setPendingLabelEdit(newAnnotation.id);
     }
@@ -258,7 +279,7 @@ export function AnnotationEditor() {
   }
 
   // Calculate scale to fit container while maintaining aspect ratio
-  const baseSize = 1024; // UV canvas size
+  const baseSize = canvasSize;
   const padding = 32; // 16px padding on each side
   const availableWidth = containerSize.width - padding;
   const availableHeight = containerSize.height - padding;
@@ -267,7 +288,7 @@ export function AnnotationEditor() {
   const stageHeight = baseSize;
 
   return (
-    <div ref={containerRef} className="w-full h-full flex items-center justify-center bg-muted overflow-hidden relative">
+    <div ref={containerRef} className="w-full h-full flex items-center justify-center bg-muted overflow-hidden relative" onContextMenu={(e) => e.preventDefault()}>
       {/* Zoom controls */}
       <div className="absolute top-4 right-4 z-10 flex flex-col gap-2 bg-background/90 backdrop-blur-sm p-2 rounded-lg border shadow-lg">
         <Button 
@@ -317,8 +338,49 @@ export function AnnotationEditor() {
         >
           <Layer>
             {image && <KonvaImage image={image} />}
-            
-            {annotations.map((annotation) => (
+
+            {overlays.filter((o) => o.visible && o.image).map((o) => (
+              <KonvaImage
+                key={o.id}
+                ref={(node) => {
+                  if (node) overlayRefs.current.set(o.id, node);
+                  else overlayRefs.current.delete(o.id);
+                }}
+                image={o.image!}
+                x={o.x}
+                y={o.y}
+                scaleX={o.scaleX}
+                scaleY={o.scaleY}
+                opacity={o.opacity}
+                draggable={o.editMode}
+                listening={o.editMode}
+                onDragEnd={(e) => {
+                  updateOverlay(o.id, { x: e.target.x(), y: e.target.y() });
+                }}
+                onTransformEnd={() => {
+                  const node = overlayRefs.current.get(o.id);
+                  if (!node) return;
+                  updateOverlay(o.id, { x: node.x(), y: node.y(), scaleX: node.scaleX(), scaleY: node.scaleY() });
+                }}
+              />
+            ))}
+            {editingOverlay && (
+              <Transformer
+                ref={overlayTransformerRef}
+                rotateEnabled={false}
+                keepRatio={editingOverlay.lockAspect}
+                enabledAnchors={[
+                  'top-left', 'top-right',
+                  'bottom-left', 'bottom-right',
+                ]}
+                boundBoxFunc={(oldBox, newBox) => {
+                  if (newBox.width < 10 || newBox.height < 10) return oldBox;
+                  return newBox;
+                }}
+              />
+            )}
+
+            {annotations.filter((a) => a.visible !== false).map((annotation) => (
               <AnnotationBox
                 key={annotation.id}
                 annotation={annotation}

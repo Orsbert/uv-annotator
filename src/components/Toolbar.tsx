@@ -1,11 +1,12 @@
-import { Download, Sparkles, Keyboard, Paintbrush, Check, Menu, Upload } from 'lucide-react';
+import { Download, Sparkles, Keyboard, Paintbrush, Check, Menu, Upload, ImagePlus } from 'lucide-react';
 import { useModelStore } from '../store/combinedStores';
 import { useCanvasStore } from '../store/combinedStores';
 import { useAnnotationStore } from '../store/combinedStores';
-import { usePaintStore } from '../store/combinedStores';
+import { usePaintStore, useOverlayStore, CANVAS_SCALE_OPTIONS } from '../store/combinedStores';
 import { useSessionStore } from '../store/useSessionStore';
 import { Button } from './ui/button';
 import { generateUVLayout } from '../utils/uvGenerator';
+import { renderAnnotationsToCanvas, renderOverlaysToCanvas } from '../services/annotationRenderer';
 import { useState } from 'react';
 
 interface ToolbarProps {
@@ -17,6 +18,8 @@ export function Toolbar({ onToggleSidebar }: ToolbarProps) {
   const uvCanvas = useCanvasStore((state) => state.uvCanvas);
   const setUVTexture = useCanvasStore((state) => state.setUVTexture);
   const setUVCanvas = useCanvasStore((state) => state.setUVCanvas);
+  const canvasSize = useCanvasStore((state) => state.canvasSize);
+  const setCanvasSize = useCanvasStore((state) => state.setCanvasSize);
   const annotations = useAnnotationStore((state) => state.annotations);
   const isPaintMode = usePaintStore((state) => state.isPaintMode);
   const setPaintMode = usePaintStore((state) => state.setPaintMode);
@@ -24,7 +27,8 @@ export function Toolbar({ onToggleSidebar }: ToolbarProps) {
   const setBrushSize = usePaintStore((state) => state.setBrushSize);
   const createAnnotationFromPaint = usePaintStore((state) => state.createAnnotationFromPaint);
   const paintedUVCoords = usePaintStore((state) => state.paintedUVCoords);
-  
+  const overlays = useOverlayStore((state) => state.overlays);
+
   const currentSessionId = useSessionStore((state) => state.currentSessionId);
 
   const sessions = useSessionStore((state) => state.sessions);
@@ -41,7 +45,7 @@ export function Toolbar({ onToggleSidebar }: ToolbarProps) {
     }
 
     try {
-      const { canvas, texture } = generateUVLayout(selectedMesh);
+      const { canvas, texture } = generateUVLayout(selectedMesh, canvasSize);
       setUVTexture(texture);
       setUVCanvas(canvas);
     } catch (error) {
@@ -66,8 +70,8 @@ export function Toolbar({ onToggleSidebar }: ToolbarProps) {
 
     // Create a temporary canvas for export
     const exportCanvas = document.createElement('canvas');
-    exportCanvas.width = 1024;
-    exportCanvas.height = 1024;
+    exportCanvas.width = canvasSize;
+    exportCanvas.height = canvasSize;
     const ctx = exportCanvas.getContext('2d');
     
     if (!ctx) return;
@@ -75,42 +79,11 @@ export function Toolbar({ onToggleSidebar }: ToolbarProps) {
     // Draw the UV layout
     ctx.drawImage(uvCanvas, 0, 0);
 
-    // Draw annotations
-    annotations.forEach((ann) => {
-      ctx.save();
-      
-      // Translate to annotation center for rotation
-      ctx.translate(ann.x + ann.width / 2, ann.y + ann.height / 2);
-      ctx.rotate((ann.rotation * Math.PI) / 180);
-      ctx.translate(-(ann.x + ann.width / 2), -(ann.y + ann.height / 2));
-      
-      // Draw rectangle
-      ctx.strokeStyle = '#ff0000';
-      ctx.lineWidth = 2;
-      ctx.strokeRect(ann.x, ann.y, ann.width, ann.height);
-      
-      // Draw label inside box at top-left with padding
-      const fontSize = 8;
-      const padding = 4;
-      
-      // Draw shadow
-      ctx.fillStyle = '#000000';
-      ctx.font = `${fontSize}px Arial`;
-      ctx.textAlign = 'left';
-      ctx.globalAlpha = 0.8;
-      ctx.fillText(ann.label, ann.x + padding - 1, ann.y + padding + 1);
-      ctx.fillText(ann.label, ann.x + padding + 1, ann.y + padding + 1);
-      ctx.fillText(ann.label, ann.x + padding - 1, ann.y + padding - 1);
-      ctx.fillText(ann.label, ann.x + padding + 1, ann.y + padding - 1);
-      ctx.globalAlpha = 1;
-      
-      // Draw white text
-      ctx.fillStyle = '#ffffff';
-      ctx.fillText(ann.label, ann.x + padding, ann.y + padding);
+    // Draw overlays
+    renderOverlaysToCanvas(ctx, overlays);
 
-      
-      ctx.restore();
-    });
+    // Draw annotations on top
+    renderAnnotationsToCanvas(ctx, annotations);
 
     // Export as PNG
     exportCanvas.toBlob((blob) => {
@@ -171,6 +144,16 @@ export function Toolbar({ onToggleSidebar }: ToolbarProps) {
           Upload Model
         </Button>
 
+        <Button
+          onClick={() => document.getElementById('overlay-upload')?.click()}
+          variant="outline"
+          disabled={!uvCanvas}
+          title="Upload Template Overlay"
+        >
+          <ImagePlus className="mr-2 h-4 w-4" />
+          Overlay
+        </Button>
+
         {isPaintMode && (
           <>
             <div className="flex items-center gap-2 px-3 py-1 bg-muted rounded">
@@ -215,6 +198,20 @@ export function Toolbar({ onToggleSidebar }: ToolbarProps) {
           <Keyboard className="h-5 w-5" />
         </Button>
         
+        {/* Canvas scale selector */}
+        <select
+          value={canvasSize}
+          onChange={(e) => setCanvasSize(Number(e.target.value) as typeof canvasSize)}
+          className="h-9 rounded-md border bg-background px-2 text-sm"
+          title="Canvas resolution"
+        >
+          {CANVAS_SCALE_OPTIONS.map((size) => (
+            <option key={size} value={size}>
+              {size}x{size}
+            </option>
+          ))}
+        </select>
+
         <Button
           onClick={handleGenerateUV}
           disabled={!selectedMesh}
@@ -223,7 +220,7 @@ export function Toolbar({ onToggleSidebar }: ToolbarProps) {
           <Sparkles className="mr-2 h-4 w-4" />
           Generate UV Layout
         </Button>
-        
+
         <Button
           onClick={handleExport}
           disabled={!uvCanvas}
@@ -231,7 +228,7 @@ export function Toolbar({ onToggleSidebar }: ToolbarProps) {
           title="Export (Ctrl/Cmd + E)"
         >
           <Download className="mr-2 h-4 w-4" />
-          Export 1024x1024
+          Export {canvasSize}x{canvasSize}
         </Button>
       </div>
 
@@ -273,6 +270,10 @@ export function Toolbar({ onToggleSidebar }: ToolbarProps) {
             <div className="flex justify-between gap-4">
               <span className="text-muted-foreground">Deselect / Exit Paint</span>
               <kbd className="px-2 py-1 bg-muted rounded">Esc</kbd>
+            </div>
+            <div className="flex justify-between gap-4">
+              <span className="text-muted-foreground">Toggle Overlay</span>
+              <kbd className="px-2 py-1 bg-muted rounded">T</kbd>
             </div>
             <div className="flex justify-between gap-4">
               <span className="text-muted-foreground">Toggle Help</span>

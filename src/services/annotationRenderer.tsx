@@ -131,9 +131,9 @@ export function AnnotationBox({ annotation, isSelected, onSelect, onChange }: An
           width={width}
           height={height}
           stroke={colorTheme.main}
-          strokeWidth={isSelected ? 3 : (isHovered ? 2.5 : 2)}
-          fill={isHovered ? colorTheme.light + '40' : colorTheme.light}
-          opacity={isHovered || isSelected ? 0.8 : 0.6}
+          strokeWidth={isSelected ? 2 : 1.5}
+          fill={colorTheme.light}
+          opacity={isHovered || isSelected ? 0.5 : 0.35}
         />
       </Group>
 
@@ -195,10 +195,10 @@ export function AnnotationBox({ annotation, isSelected, onSelect, onChange }: An
  * The canvas coordinate system is pixel space (0‑1024).
  */
 export function renderAnnotationToCanvas(ctx: CanvasRenderingContext2D, ann: Annotation) {
+  if (ann.visible === false) return;
   const { x, y, width, height, rotation, label, color } = ann;
   const colorTheme = getColorTheme(color);
-  
-  ctx.save();
+
   ctx.save();
   // Translate to centre for rotation
   ctx.translate(x + width / 2, y + height / 2);
@@ -207,13 +207,13 @@ export function renderAnnotationToCanvas(ctx: CanvasRenderingContext2D, ann: Ann
 
   // Filled rectangle
   ctx.fillStyle = colorTheme.light;
-  ctx.globalAlpha = 0.6;
+  ctx.globalAlpha = 0.35;
   ctx.fillRect(x, y, width, height);
   ctx.globalAlpha = 1.0;
 
   // Border
   ctx.strokeStyle = colorTheme.main;
-  ctx.lineWidth = 2;
+  ctx.lineWidth = 1.5;
   ctx.strokeRect(x, y, width, height);
 
   // Label inside box at top-left with padding
@@ -245,5 +245,36 @@ export function renderAnnotationToCanvas(ctx: CanvasRenderingContext2D, ann: Ann
  */
 export function renderAnnotationsToCanvas(ctx: CanvasRenderingContext2D, annotations: Annotation[]) {
   annotations.forEach((ann) => renderAnnotationToCanvas(ctx, ann));
+}
+
+/**
+ * Draw all visible overlays onto a 2D canvas context.
+ * Renders each overlay at its stored position, scale, and opacity.
+ */
+export function renderOverlaysToCanvas(
+  ctx: CanvasRenderingContext2D,
+  overlays: Array<{
+    visible: boolean;
+    image: HTMLImageElement | null;
+    x: number;
+    y: number;
+    scaleX: number;
+    scaleY: number;
+    opacity: number;
+  }>
+) {
+  for (const overlay of overlays) {
+    if (!overlay.visible || !overlay.image) continue;
+    ctx.save();
+    ctx.globalAlpha = overlay.opacity;
+    ctx.drawImage(
+      overlay.image,
+      overlay.x,
+      overlay.y,
+      overlay.image.naturalWidth * overlay.scaleX,
+      overlay.image.naturalHeight * overlay.scaleY
+    );
+    ctx.restore();
+  }
 }
 

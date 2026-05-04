@@ -45,6 +45,7 @@ export function AnnotationControls() {
       rotation: 0,
       label: `b${existingBoxCount + 1}`,
       color: ANNOTATION_COLORS[colorIndex].name,
+      visible: true,
     };
     addAnnotation(newAnnotation);
     setPendingLabelEdit(newAnnotation.id);

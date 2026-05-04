@@ -1,17 +1,16 @@
 import { useEffect } from 'react';
-import { useStore } from '../store/useStore';
+import { useAnnotationStore, useModelStore, useCanvasStore, usePaintStore, useOverlayStore } from '../store/combinedStores';
 import type { Annotation } from '../types';
 
 export function useKeyboardShortcuts() {
-  const selectedAnnotationId = useStore((state) => state.selectedAnnotationId);
-  const addAnnotation = useStore((state) => state.addAnnotation);
-  const deleteAnnotation = useStore((state) => state.deleteAnnotation);
-  const setSelectedAnnotationId = useStore((state) => state.setSelectedAnnotationId);
-  const selectedMesh = useStore((state) => state.selectedMesh);
-  const setUVTexture = useStore((state) => state.setUVTexture);
-  const uvCanvas = useStore((state) => state.uvCanvas);
-  const isPaintMode = useStore((state) => state.isPaintMode);
-  const setPaintMode = useStore((state) => state.setPaintMode);
+  const selectedAnnotationId = useAnnotationStore((state) => state.selectedAnnotationId);
+  const addAnnotation = useAnnotationStore((state) => state.addAnnotation);
+  const deleteAnnotation = useAnnotationStore((state) => state.deleteAnnotation);
+  const setSelectedAnnotationId = useAnnotationStore((state) => state.setSelectedAnnotationId);
+  const selectedMesh = useModelStore((state) => state.selectedMesh);
+  const uvCanvas = useCanvasStore((state) => state.uvCanvas);
+  const isPaintMode = usePaintStore((state) => state.isPaintMode);
+  const setPaintMode = usePaintStore((state) => state.setPaintMode);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -32,6 +31,7 @@ export function useKeyboardShortcuts() {
           rotation: 0,
           label: 'New Annotation',
           color: 'coral',
+          visible: true,
         };
         addAnnotation(newAnnotation);
       }
@@ -64,7 +64,6 @@ export function useKeyboardShortcuts() {
       if (e.key === 'g' || e.key === 'G') {
         e.preventDefault();
         if (selectedMesh) {
-          // Trigger UV generation
           const event = new CustomEvent('generate-uv');
           window.dispatchEvent(event);
         }
@@ -74,9 +73,19 @@ export function useKeyboardShortcuts() {
       if ((e.ctrlKey || e.metaKey) && e.key === 'e') {
         e.preventDefault();
         if (uvCanvas) {
-          // Trigger export
           const event = new CustomEvent('export-texture');
           window.dispatchEvent(event);
+        }
+      }
+
+      // T - Toggle all overlay visibility
+      if (e.key === 't' || e.key === 'T') {
+        e.preventDefault();
+        const { overlays, updateOverlay } = useOverlayStore.getState();
+        if (overlays.length > 0) {
+          // If any are visible, hide all; otherwise show all
+          const anyVisible = overlays.some((o) => o.visible);
+          overlays.forEach((o) => updateOverlay(o.id, { visible: !anyVisible }));
         }
       }
 
@@ -90,5 +99,5 @@ export function useKeyboardShortcuts() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [selectedAnnotationId, addAnnotation, deleteAnnotation, setSelectedAnnotationId, selectedMesh, uvCanvas, setUVTexture, isPaintMode, setPaintMode]);
+  }, [selectedAnnotationId, addAnnotation, deleteAnnotation, setSelectedAnnotationId, selectedMesh, uvCanvas, isPaintMode, setPaintMode]);
 }

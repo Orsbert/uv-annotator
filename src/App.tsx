@@ -9,7 +9,7 @@ import { SessionSidebar } from './components/SessionSidebar';
 import { AnnotationOutliner } from './components/layout/AnnotationOutliner';
 import { PropertiesPanel } from './components/layout/PropertiesPanel';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
-import { createNewSession, loadSession } from './services/sessionManager';
+import { createNewSession, loadSession, saveCurrentSession } from './services/sessionManager';
 import { useSessionStore } from './store/useSessionStore';
 
 function App() {
@@ -18,23 +18,34 @@ function App() {
   const currentSessionId = useSessionStore((state) => state.currentSessionId);
   const sessions = useSessionStore((state) => state.sessions);
 
+  // Initialize session on mount — Zustand persist already rehydrates store state,
+  // so we only need to call loadSession when picking a different session or creating one.
   useEffect(() => {
     const initializeSession = async () => {
       if (currentSessionId) {
-        // Load the current session if one exists
-        await loadSession(currentSessionId);
+        // Zustand persist already rehydrated all stores — nothing to reload
       } else if (sessions.length > 0) {
-        // Load the most recent session
         const mostRecent = sessions.sort((a, b) => b.lastModified - a.lastModified)[0];
         await loadSession(mostRecent.id);
       } else {
-        // Create a new session if none exist
         await createNewSession();
       }
     };
-
     initializeSession();
   }, []); // Only run once on mount
+
+  // Auto-save current session before page unload
+  useEffect(() => {
+    const handleBeforeUnload = () => { saveCurrentSession(); };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, []);
+
+  // Periodic auto-save every 30s as a safety net
+  useEffect(() => {
+    const interval = setInterval(() => { saveCurrentSession(); }, 30000);
+    return () => clearInterval(interval);
+  }, []);
 
   return (
     <div className="h-full w-full flex flex-col bg-background overflow-hidden">

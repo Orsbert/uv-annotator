@@ -148,13 +148,17 @@ export const useAnnotationStore = create<AnnotationState>()(
 );
 
 /** Canvas Store */
-/** Canvas Store */
+export const CANVAS_SCALE_OPTIONS = [1024, 2048, 3072, 4096] as const;
+export type CanvasSize = (typeof CANVAS_SCALE_OPTIONS)[number];
+
 export interface CanvasState {
   uvCanvas: HTMLCanvasElement | null;
   uvTexture: THREE.CanvasTexture | null;
   uvImageData: string | null;
+  canvasSize: CanvasSize;
   setUVCanvas: (canvas: HTMLCanvasElement | null) => void;
   setUVTexture: (texture: THREE.CanvasTexture | null) => void;
+  setCanvasSize: (size: CanvasSize) => void;
   restoreCanvas: () => Promise<void>;
 }
 
@@ -164,11 +168,82 @@ export const useCanvasStore = create<CanvasState>()(
       uvCanvas: null,
       uvTexture: null,
       uvImageData: null,
+      canvasSize: 1024 as CanvasSize,
       setUVCanvas: (canvas) => {
         const dataUrl = canvas ? canvas.toDataURL() : null;
         set({ uvCanvas: canvas, uvImageData: dataUrl });
       },
       setUVTexture: (texture) => set({ uvTexture: texture }),
+      setCanvasSize: (size) => {
+        const oldSize = get().canvasSize;
+        if (size === oldSize) return;
+        const ratio = size / oldSize;
+
+        const { selectedMesh } = useModelStore.getState();
+        if (selectedMesh) {
+          // Regenerate UV layout at new size FIRST, then apply all changes together
+          import('../utils/uvGenerator').then(({ generateUVLayout }) => {
+            const { canvas, texture } = generateUVLayout(selectedMesh, size);
+
+            // Scale all annotations proportionally
+            const { annotations, updateAnnotation } = useAnnotationStore.getState();
+            annotations.forEach((ann) => {
+              updateAnnotation(ann.id, {
+                x: ann.x * ratio,
+                y: ann.y * ratio,
+                width: ann.width * ratio,
+                height: ann.height * ratio,
+              });
+            });
+
+            // Scale all overlays proportionally
+            const { overlays, updateOverlay } = useOverlayStore.getState();
+            overlays.forEach((o) => {
+              updateOverlay(o.id, {
+                x: o.x * ratio, y: o.y * ratio,
+                scaleX: o.scaleX * ratio, scaleY: o.scaleY * ratio,
+              });
+            });
+
+            // Draw scaled annotations onto the new canvas
+            const ctx = canvas.getContext('2d');
+            if (ctx) {
+              import('../services/annotationRenderer').then(({ renderAnnotationsToCanvas, renderOverlaysToCanvas }) => {
+                const currentOverlays = useOverlayStore.getState().overlays;
+                renderOverlaysToCanvas(ctx, currentOverlays);
+                const currentAnnotations = useAnnotationStore.getState().annotations;
+                renderAnnotationsToCanvas(ctx, currentAnnotations);
+                texture.needsUpdate = true;
+                // Set everything at once so nothing flashes
+                const dataUrl = canvas.toDataURL();
+                set({ canvasSize: size, uvCanvas: canvas, uvTexture: texture, uvImageData: dataUrl });
+              });
+            } else {
+              const dataUrl = canvas.toDataURL();
+              set({ canvasSize: size, uvCanvas: canvas, uvTexture: texture, uvImageData: dataUrl });
+            }
+          });
+        } else {
+          // No mesh — just scale annotations/overlay and update size
+          const { annotations, updateAnnotation } = useAnnotationStore.getState();
+          annotations.forEach((ann) => {
+            updateAnnotation(ann.id, {
+              x: ann.x * ratio,
+              y: ann.y * ratio,
+              width: ann.width * ratio,
+              height: ann.height * ratio,
+            });
+          });
+          const { overlays, updateOverlay } = useOverlayStore.getState();
+          overlays.forEach((o) => {
+            updateOverlay(o.id, {
+              x: o.x * ratio, y: o.y * ratio,
+              scaleX: o.scaleX * ratio, scaleY: o.scaleY * ratio,
+            });
+          });
+          set({ canvasSize: size });
+        }
+      },
       restoreCanvas: async () => {
         const { uvImageData } = get();
         if (!uvImageData) return;
@@ -200,10 +275,126 @@ export const useCanvasStore = create<CanvasState>()(
     {
       name: 'canvas-storage',
       storage: idbStorage as any,
-      partialize: (state) => ({ uvImageData: state.uvImageData }),
+      partialize: (state) => ({ uvImageData: state.uvImageData, canvasSize: state.canvasSize }),
       onRehydrateStorage: () => (state) => {
         if (state) {
           state.restoreCanvas();
+        }
+      },
+    }
+  )
+);
+
+/** Overlay Store */
+export interface OverlayItem {
+  id: string;
+  imageData: string;
+  imageName: string;
+  opacity: number;
+  visible: boolean;
+  x: number;
+  y: number;
+  scaleX: number;
+  scaleY: number;
+  lockAspect: boolean;
+  editMode: boolean;
+  image: HTMLImageElement | null; // runtime only
+}
+
+export interface OverlayState {
+  overlays: OverlayItem[];
+  selectedOverlayId: string | null;
+  addOverlay: (dataUrl: string, name: string) => void;
+  updateOverlay: (id: string, updates: Partial<Omit<OverlayItem, 'id'>>) => void;
+  removeOverlay: (id: string) => void;
+  removeAllOverlays: () => void;
+  setSelectedOverlayId: (id: string | null) => void;
+  fitOverlayToCanvas: (id: string) => void;
+  restoreOverlays: () => Promise<void>;
+}
+
+export const useOverlayStore = create<OverlayState>()(
+  persist(
+    (set, get) => ({
+      overlays: [],
+      selectedOverlayId: null,
+      addOverlay: (dataUrl, name) => {
+        const id = `overlay-${Date.now()}`;
+        const img = new window.Image();
+        img.src = dataUrl;
+        img.onload = () => {
+          set((state) => ({
+            overlays: [...state.overlays, {
+              id,
+              imageData: dataUrl,
+              imageName: name,
+              opacity: 0.5,
+              visible: true,
+              x: 0,
+              y: 0,
+              scaleX: 1,
+              scaleY: 1,
+              lockAspect: true,
+              editMode: false,
+              image: img,
+            }],
+            selectedOverlayId: id,
+          }));
+        };
+      },
+      updateOverlay: (id, updates) => {
+        set((state) => ({
+          overlays: state.overlays.map((o) => o.id === id ? { ...o, ...updates } : o),
+        }));
+      },
+      removeOverlay: (id) => {
+        set((state) => ({
+          overlays: state.overlays.filter((o) => o.id !== id),
+          selectedOverlayId: state.selectedOverlayId === id ? null : state.selectedOverlayId,
+        }));
+      },
+      removeAllOverlays: () => set({ overlays: [], selectedOverlayId: null }),
+      setSelectedOverlayId: (id) => set({ selectedOverlayId: id }),
+      fitOverlayToCanvas: (id) => {
+        const overlay = get().overlays.find((o) => o.id === id);
+        if (!overlay?.image) return;
+        const canvasSize = useCanvasStore.getState().canvasSize;
+        const imgW = overlay.image.naturalWidth;
+        const imgH = overlay.image.naturalHeight;
+        if (imgW === 0 || imgH === 0) return;
+        const scale = Math.min(canvasSize / imgW, canvasSize / imgH);
+        const x = (canvasSize - imgW * scale) / 2;
+        const y = (canvasSize - imgH * scale) / 2;
+        set((state) => ({
+          overlays: state.overlays.map((o) => o.id === id
+            ? { ...o, scaleX: scale, scaleY: scale, x, y }
+            : o
+          ),
+        }));
+      },
+      restoreOverlays: async () => {
+        const { overlays } = get();
+        const restored = await Promise.all(
+          overlays.map(async (o) => {
+            if (!o.imageData) return o;
+            const img = new window.Image();
+            img.src = o.imageData;
+            await new Promise((resolve) => { img.onload = resolve; });
+            return { ...o, image: img };
+          })
+        );
+        set({ overlays: restored });
+      },
+    }),
+    {
+      name: 'overlay-storage',
+      storage: idbStorage as any,
+      partialize: (state) => ({
+        overlays: state.overlays.map(({ image, ...rest }) => rest),
+      }),
+      onRehydrateStorage: () => (state) => {
+        if (state) {
+          state.restoreOverlays();
         }
       },
     }
@@ -291,6 +482,7 @@ export const usePaintStore = create<PaintState>()(
           rotation: 0,
           label: `b${existingBoxCount + 1}`,
           color: ANNOTATION_COLORS[colorIndex].name,
+          visible: true,
         };
 
         // Update stores
@@ -305,15 +497,18 @@ export const usePaintStore = create<PaintState>()(
             if (!ctx) return;
 
             // 1. Regenerate clean UV layout
-            const { canvas: newCanvas } = generateUVLayout(selectedMesh);
+            const { canvasSize } = useCanvasStore.getState();
+            const { canvas: newCanvas } = generateUVLayout(selectedMesh, canvasSize);
             ctx.clearRect(0, 0, uvCanvas.width, uvCanvas.height);
             ctx.drawImage(newCanvas, 0, 0);
 
-            // 2. Draw all annotations (including the new one)
+            // 2. Draw overlays and annotations
             const currentAnnotations = useAnnotationStore.getState().annotations;
-            import('../services/annotationRenderer').then(({ renderAnnotationsToCanvas }) => {
+            import('../services/annotationRenderer').then(({ renderAnnotationsToCanvas, renderOverlaysToCanvas }) => {
+                const currentOverlays = useOverlayStore.getState().overlays;
+                renderOverlaysToCanvas(ctx, currentOverlays);
                 renderAnnotationsToCanvas(ctx, currentAnnotations);
-                
+
                 if (uvTexture) {
                     uvTexture.needsUpdate = true;
                 }

@@ -1,5 +1,6 @@
-import { Eye, Plus, Copy, Trash2, Unlock } from 'lucide-react';
+import { Eye, EyeOff, Plus, Copy, Trash2, Unlock } from 'lucide-react';
 import { useAnnotationStore } from '../../store/combinedStores';
+import { ANNOTATION_COLORS } from '../../types';
 import { Button } from '../ui/button';
 
 export function AnnotationOutliner() {
@@ -7,6 +8,7 @@ export function AnnotationOutliner() {
   const selectedAnnotationId = useAnnotationStore((state) => state.selectedAnnotationId);
   const setSelectedAnnotationId = useAnnotationStore((state) => state.setSelectedAnnotationId);
   const deleteAnnotation = useAnnotationStore((state) => state.deleteAnnotation);
+  const updateAnnotation = useAnnotationStore((state) => state.updateAnnotation);
   const addAnnotation = useAnnotationStore((state) => state.addAnnotation);
   const setPendingLabelEdit = useAnnotationStore((state) => state.setPendingLabelEdit);
 
@@ -14,12 +16,15 @@ export function AnnotationOutliner() {
     const original = annotations.find((a) => a.id === id);
     if (!original) return;
 
+    const colorIndex = annotations.length % ANNOTATION_COLORS.length;
     const duplicate = {
       ...original,
       id: `ann-${Date.now()}`,
       x: original.x + 20,
       y: original.y + 20,
       label: original.label + ' (copy)',
+      color: ANNOTATION_COLORS[colorIndex].name,
+      visible: true,
     };
     addAnnotation(duplicate);
     setSelectedAnnotationId(duplicate.id);
@@ -35,7 +40,8 @@ export function AnnotationOutliner() {
       height: 150,
       rotation: 0,
       label: `b${existingBoxCount + 1}`,
-      color: 'red',
+      color: ANNOTATION_COLORS[annotations.length % ANNOTATION_COLORS.length].name,
+      visible: true,
     };
     addAnnotation(newAnnotation);
     setPendingLabelEdit(newAnnotation.id);
@@ -63,10 +69,10 @@ export function AnnotationOutliner() {
               className="p-0.5 hover:bg-accent-foreground/10 rounded"
               onClick={(e) => {
                 e.stopPropagation();
-                // Toggle visibility (future feature)
+                updateAnnotation(ann.id, { visible: ann.visible !== false ? false : true });
               }}
             >
-              <Eye className="h-3 w-3" />
+              {ann.visible !== false ? <Eye className="h-3 w-3" /> : <EyeOff className="h-3 w-3 text-muted-foreground" />}
             </button>
 
             {/* Indicator */}

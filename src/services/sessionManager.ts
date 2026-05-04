@@ -1,5 +1,5 @@
 import { get, set, del } from 'idb-keyval';
-import { useModelStore, useAnnotationStore, useCanvasStore, usePaintStore } from '../store/combinedStores';
+import { useModelStore, useAnnotationStore, useCanvasStore, usePaintStore, useOverlayStore } from '../store/combinedStores';
 import { useSessionStore, SessionMetadata } from '../store/useSessionStore';
 
 export const saveCurrentSession = async () => {
@@ -10,7 +10,12 @@ export const saveCurrentSession = async () => {
   const annotationState = useAnnotationStore.getState();
   const canvasState = useCanvasStore.getState();
   const paintState = usePaintStore.getState();
-  
+
+  // Don't save if stores appear unhydrated (avoid overwriting good data with empty state)
+  if (!modelState.modelBuffer && !canvasState.uvImageData && annotationState.annotations.length === 0) {
+    return;
+  }
+
   // Save to IDB with session ID prefix
   await set(`session-${currentSessionId}-model`, {
       modelBuffer: modelState.modelBuffer,
@@ -18,13 +23,18 @@ export const saveCurrentSession = async () => {
       selectedMeshName: modelState.selectedMeshName
   });
   await set(`session-${currentSessionId}-annotations`, { annotations: annotationState.annotations });
-  await set(`session-${currentSessionId}-canvas`, { uvImageData: canvasState.uvImageData });
+  await set(`session-${currentSessionId}-canvas`, { uvImageData: canvasState.uvImageData, canvasSize: canvasState.canvasSize });
   await set(`session-${currentSessionId}-paint`, {
       isPaintMode: paintState.isPaintMode,
       brushSize: paintState.brushSize,
       paintedUVCoords: paintState.paintedUVCoords
   });
-  
+
+  const overlayState = useOverlayStore.getState();
+  await set(`session-${currentSessionId}-overlay`, {
+      overlays: overlayState.overlays.map(({ image, ...rest }) => rest),
+  });
+
   // Update metadata
   useSessionStore.getState().updateSession(currentSessionId, {
       lastModified: Date.now(),
@@ -41,7 +51,8 @@ export const loadSession = async (sessionId: string) => {
     const annotationData = await get<any>(`session-${sessionId}-annotations`);
     const canvasData = await get<any>(`session-${sessionId}-canvas`);
     const paintData = await get<any>(`session-${sessionId}-paint`);
-    
+    const overlayData = await get<any>(`session-${sessionId}-overlay`);
+
     // 3. Update stores
     const { setModelBuffer, loadModelFromBuffer, setModel } = useModelStore.getState();
     const { clearAnnotations, addAnnotation } = useAnnotationStore.getState();
@@ -82,7 +93,7 @@ export const loadSession = async (sessionId: string) => {
     
     // Restore Canvas
     if (canvasData && canvasData.uvImageData) {
-        useCanvasStore.setState({ uvImageData: canvasData.uvImageData });
+        useCanvasStore.setState({ uvImageData: canvasData.uvImageData, canvasSize: canvasData.canvasSize ?? 1024 });
         await restoreCanvas();
     } else {
         setUVCanvas(null);
@@ -100,7 +111,18 @@ export const loadSession = async (sessionId: string) => {
         setBrushSize(20);
         clearPaintedUVCoords();
     }
-    
+
+    // Restore Overlays
+    if (overlayData && overlayData.overlays && overlayData.overlays.length > 0) {
+        useOverlayStore.setState({
+            overlays: overlayData.overlays.map((o: any) => ({ ...o, image: null })),
+            selectedOverlayId: null,
+        });
+        await useOverlayStore.getState().restoreOverlays();
+    } else {
+        useOverlayStore.getState().removeAllOverlays();
+    }
+
     useSessionStore.getState().setCurrentSessionId(sessionId);
 };
 
@@ -126,10 +148,11 @@ export const createNewSession = async () => {
     useAnnotationStore.getState().clearAnnotations();
     useCanvasStore.getState().setUVCanvas(null);
     useCanvasStore.getState().setUVTexture(null);
-    useCanvasStore.setState({ uvImageData: null });
+    useCanvasStore.setState({ uvImageData: null, canvasSize: 1024 });
     usePaintStore.getState().setPaintMode(false);
     usePaintStore.getState().clearPaintedUVCoords();
-    
+    useOverlayStore.getState().removeAllOverlays();
+
     return newId;
 };
 
@@ -138,6 +161,7 @@ export const deleteSession = async (sessionId: string) => {
     await del(`session-${sessionId}-annotations`);
     await del(`session-${sessionId}-canvas`);
     await del(`session-${sessionId}-paint`);
+    await del(`session-${sessionId}-overlay`);
     useSessionStore.getState().removeSession(sessionId);
     
     // If we deleted the current session, switch to another one

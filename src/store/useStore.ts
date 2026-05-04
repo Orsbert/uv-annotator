@@ -187,8 +187,9 @@ export const useStore = create<AppState>((set, get) => ({
       rotation: 0,
       label: `b${existingBoxCount + 1}`,
       color: 'coral',
+      visible: true,
     };
-    
+
     set((state) => ({
       annotations: [...state.annotations, newAnnotation],
       selectedAnnotationId: newAnnotation.id,

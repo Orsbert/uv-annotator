@@ -1,9 +1,9 @@
 import * as THREE from 'three';
 
-export function generateUVLayout(mesh: THREE.Mesh): { canvas: HTMLCanvasElement; texture: THREE.CanvasTexture } {
+export function generateUVLayout(mesh: THREE.Mesh, canvasSize: number = 1024): { canvas: HTMLCanvasElement; texture: THREE.CanvasTexture } {
   const canvas = document.createElement('canvas');
-  canvas.width = 1024;
-  canvas.height = 1024;
+  canvas.width = canvasSize;
+  canvas.height = canvasSize;
   const ctx = canvas.getContext('2d');
   
   if (!ctx) {
