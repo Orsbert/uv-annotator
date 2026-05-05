@@ -1,4 +1,4 @@
-import { Download, Sparkles, Keyboard, Paintbrush, Check, Menu, Upload, ImagePlus } from 'lucide-react';
+import { Download, Sparkles, Keyboard, Paintbrush, Check, Menu, Upload, ImagePlus, Box } from 'lucide-react';
 import { useModelStore } from '../store/combinedStores';
 import { useCanvasStore } from '../store/combinedStores';
 import { useAnnotationStore } from '../store/combinedStores';
@@ -8,6 +8,8 @@ import { Button } from './ui/button';
 import { generateUVLayout } from '../utils/uvGenerator';
 import { renderAnnotationsToCanvas, renderOverlaysToCanvas } from '../services/annotationRenderer';
 import { useState } from 'react';
+import { GLTFExporter } from 'three-stdlib';
+import * as THREE from 'three';
 
 interface ToolbarProps {
   onToggleSidebar: () => void;
@@ -28,8 +30,15 @@ export function Toolbar({ onToggleSidebar }: ToolbarProps) {
   const createAnnotationFromPaint = usePaintStore((state) => state.createAnnotationFromPaint);
   const paintedUVCoords = usePaintStore((state) => state.paintedUVCoords);
   const overlays = useOverlayStore((state) => state.overlays);
+  const model = useModelStore((state) => state.model);
+  const modelName = useModelStore((state) => state.modelName);
+  const uvTexture = useCanvasStore((state) => state.uvTexture);
 
   const currentSessionId = useSessionStore((state) => state.currentSessionId);
+  const [exportFormat, setExportFormat] = useState<'glb' | 'gltf'>('glb');
+  const [bakeAnnotations, setBakeAnnotations] = useState(false);
+  const [applyTransforms, setApplyTransforms] = useState(true);
+  const [exportMenuOpen, setExportMenuOpen] = useState(false);
 
   const sessions = useSessionStore((state) => state.sessions);
   const currentSession = sessions.find(s => s.id === currentSessionId);
@@ -60,6 +69,102 @@ export function Toolbar({ onToggleSidebar }: ToolbarProps) {
 
   const handleFinishPainting = () => {
     createAnnotationFromPaint();
+  };
+
+  const baseFileName = () => {
+    const name = modelName ?? currentSession?.name ?? 'model';
+    return name.replace(/\.(glb|gltf)$/i, '');
+  };
+
+  const handleExportModel = async (format: 'glb' | 'gltf') => {
+    if (!model) {
+      alert('Please upload a model first');
+      return;
+    }
+
+    // Clone the scene so we don't mutate the live model
+    const exportScene = model.clone(true);
+
+    // If we don't want annotations baked in, replace the texture map.
+    // If a background image was uploaded, use that as a clean texture; otherwise drop the map.
+    if (!bakeAnnotations && uvTexture) {
+      const bg = useCanvasStore.getState().backgroundImage;
+      let cleanTexture: THREE.Texture | null = null;
+      if (bg && bg.complete && bg.naturalWidth > 0 && uvCanvas) {
+        const cleanCanvas = document.createElement('canvas');
+        cleanCanvas.width = uvCanvas.width;
+        cleanCanvas.height = uvCanvas.height;
+        const cctx = cleanCanvas.getContext('2d');
+        if (cctx) cctx.drawImage(bg, 0, 0, cleanCanvas.width, cleanCanvas.height);
+        cleanTexture = new THREE.CanvasTexture(cleanCanvas);
+        cleanTexture.colorSpace = THREE.SRGBColorSpace;
+        cleanTexture.flipY = false;
+      }
+
+      exportScene.traverse((obj) => {
+        if (obj instanceof THREE.Mesh) {
+          const mat = obj.material as THREE.MeshStandardMaterial | undefined;
+          if (mat && mat.map === uvTexture) {
+            const clonedMat = mat.clone();
+            clonedMat.map = cleanTexture;
+            clonedMat.needsUpdate = true;
+            obj.material = clonedMat;
+          }
+        }
+      });
+    } else if (uvTexture) {
+      uvTexture.needsUpdate = true;
+    }
+
+    // Apply transforms to geometry: bake each mesh's matrixWorld into its
+    // vertex positions and reset the transform to identity.
+    if (applyTransforms) {
+      exportScene.updateMatrixWorld(true);
+      exportScene.traverse((obj) => {
+        if (obj instanceof THREE.Mesh) {
+          const geom = obj.geometry.clone();
+          geom.applyMatrix4(obj.matrixWorld);
+          obj.geometry = geom;
+          obj.position.set(0, 0, 0);
+          obj.rotation.set(0, 0, 0);
+          obj.scale.set(1, 1, 1);
+          obj.updateMatrix();
+        }
+      });
+      exportScene.position.set(0, 0, 0);
+      exportScene.rotation.set(0, 0, 0);
+      exportScene.scale.set(1, 1, 1);
+      exportScene.updateMatrix();
+    }
+
+    try {
+      const exporter = new GLTFExporter();
+      const result: ArrayBuffer | object = await new Promise((resolve, reject) => {
+        exporter.parse(
+          exportScene,
+          (gltf) => resolve(gltf as ArrayBuffer | object),
+          (err) => reject(err),
+          { binary: format === 'glb', embedImages: true }
+        );
+      });
+
+      const blob =
+        format === 'glb'
+          ? new Blob([result as ArrayBuffer], { type: 'model/gltf-binary' })
+          : new Blob([JSON.stringify(result)], { type: 'model/gltf+json' });
+
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${baseFileName()}-export.${format}`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error('Export failed:', err);
+      alert('Failed to export model');
+    } finally {
+      setExportMenuOpen(false);
+    }
   };
 
   const handleExport = () => {
@@ -221,15 +326,89 @@ export function Toolbar({ onToggleSidebar }: ToolbarProps) {
           Generate UV Layout
         </Button>
 
-        <Button
-          onClick={handleExport}
-          disabled={!uvCanvas}
-          variant="secondary"
-          title="Export (Ctrl/Cmd + E)"
-        >
-          <Download className="mr-2 h-4 w-4" />
-          Export {canvasSize}x{canvasSize}
-        </Button>
+        {/* Export menu */}
+        <div className="relative">
+          <Button
+            onClick={() => setExportMenuOpen((o) => !o)}
+            variant="secondary"
+            title="Export"
+          >
+            <Download className="mr-2 h-4 w-4" />
+            Export
+          </Button>
+          {exportMenuOpen && (
+            <>
+              <div
+                className="fixed inset-0 z-40"
+                onClick={() => setExportMenuOpen(false)}
+              />
+              <div className="absolute right-0 top-full mt-1 w-72 rounded-md border bg-popover shadow-lg z-50 p-2 space-y-1">
+                <div className="px-2 py-1.5 text-xs font-semibold text-muted-foreground">
+                  3D Model
+                </div>
+
+                <div className="px-2 py-1 flex items-center gap-2 text-xs">
+                  <span>Format:</span>
+                  <select
+                    value={exportFormat}
+                    onChange={(e) => setExportFormat(e.target.value as 'glb' | 'gltf')}
+                    className="h-7 rounded border bg-background px-2 text-xs flex-1"
+                  >
+                    <option value="glb">GLB (binary)</option>
+                    <option value="gltf">glTF (JSON)</option>
+                  </select>
+                </div>
+
+                <label className="px-2 py-1 flex items-center gap-2 text-xs cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={applyTransforms}
+                    onChange={(e) => setApplyTransforms(e.target.checked)}
+                    className="h-3 w-3"
+                  />
+                  Apply transforms to geometry
+                </label>
+
+                <label className="px-2 py-1 flex items-center gap-2 text-xs cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={bakeAnnotations}
+                    onChange={(e) => setBakeAnnotations(e.target.checked)}
+                    className="h-3 w-3"
+                  />
+                  Bake annotations into texture
+                </label>
+
+                <Button
+                  size="sm"
+                  variant="default"
+                  className="w-full justify-start"
+                  disabled={!model}
+                  onClick={() => handleExportModel(exportFormat)}
+                >
+                  <Box className="mr-2 h-3 w-3" />
+                  Export {exportFormat.toUpperCase()}
+                </Button>
+
+                <div className="border-t my-1" />
+
+                <div className="px-2 py-1.5 text-xs font-semibold text-muted-foreground">
+                  UV Texture
+                </div>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="w-full justify-start"
+                  disabled={!uvCanvas}
+                  onClick={() => { handleExport(); setExportMenuOpen(false); }}
+                >
+                  <Download className="mr-2 h-3 w-3" />
+                  Export PNG ({canvasSize}x{canvasSize})
+                </Button>
+              </div>
+            </>
+          )}
+        </div>
       </div>
 
       {showShortcuts && (

@@ -6,7 +6,7 @@ import { useAnnotationStore, useModelStore, useOverlayStore } from '../store/com
 import { useCanvasStore } from '../store/combinedStores';
 import type { Annotation } from '../types';
 import { ANNOTATION_COLORS } from '../types';
-import { AnnotationBox, renderAnnotationsToCanvas, renderOverlaysToCanvas } from '../services/annotationRenderer';
+import { AnnotationBox, renderAnnotationsToCanvas, renderOverlaysToCanvas, subscribeAnnotationImages } from '../services/annotationRenderer';
 import { generateUVLayout } from '../utils/uvGenerator';
 import { Button } from './ui/button';
 
@@ -17,6 +17,8 @@ export function AnnotationEditor() {
   const uvCanvas = useCanvasStore((state) => state.uvCanvas);
   const uvTexture = useCanvasStore((state) => state.uvTexture);
   const canvasSize = useCanvasStore((state) => state.canvasSize);
+  const backgroundImage = useCanvasStore((state) => state.backgroundImage);
+  const showWireframe = useCanvasStore((state) => state.showWireframe);
   const annotations = useAnnotationStore((state) => state.annotations);
   const selectedAnnotationId = useAnnotationStore((state) => state.selectedAnnotationId);
   const updateAnnotation = useAnnotationStore((state) => state.updateAnnotation);
@@ -57,36 +59,60 @@ export function AnnotationEditor() {
     return canvas;
   }, [selectedMesh, canvasSize]);
 
-  // Load the UV canvas as an image for Konva
+  // Build the base layer image for the Konva editor (background + wireframe only).
+  // Overlays and annotations are drawn as Konva nodes on top, so we exclude them
+  // here to avoid double-rendering when the user moves them.
   useEffect(() => {
-    if (uvCanvas) {
-      const img = new window.Image();
-      img.src = uvCanvas.toDataURL();
-      img.onload = () => {
-        setImage(img);
-      };
-    }
-  }, [uvCanvas]);
+    if (!uvCanvas) return;
+    const base = document.createElement('canvas');
+    base.width = uvCanvas.width;
+    base.height = uvCanvas.height;
+    const ctx = base.getContext('2d');
+    if (!ctx) return;
 
-  // Update 3D texture when annotations or overlays change
+    if (backgroundImage && backgroundImage.complete && backgroundImage.naturalWidth > 0) {
+      ctx.drawImage(backgroundImage, 0, 0, base.width, base.height);
+    }
+    if (showWireframe && wireframeCanvas) {
+      ctx.drawImage(wireframeCanvas, 0, 0);
+    }
+
+    const img = new window.Image();
+    img.src = base.toDataURL();
+    img.onload = () => setImage(img);
+  }, [uvCanvas, backgroundImage, showWireframe, wireframeCanvas]);
+
+  // Tick to redraw when annotation images finish loading async
+  const [annImageTick, setAnnImageTick] = useState(0);
+  useEffect(() => subscribeAnnotationImages(() => setAnnImageTick((t) => t + 1)), []);
+
+  // Update 3D texture when annotations or overlays or background change
   useEffect(() => {
     if (!uvTexture || !uvCanvas || !wireframeCanvas) return;
     const ctx = uvCanvas.getContext('2d');
     if (!ctx) return;
 
-    // 1. Draw clean wireframe base
     ctx.clearRect(0, 0, uvCanvas.width, uvCanvas.height);
-    ctx.drawImage(wireframeCanvas, 0, 0);
 
-    // 2. Draw visible overlays
+    // 1. Draw background texture (cover-fits the canvas)
+    if (backgroundImage && backgroundImage.complete && backgroundImage.naturalWidth > 0) {
+      ctx.drawImage(backgroundImage, 0, 0, uvCanvas.width, uvCanvas.height);
+    }
+
+    // 2. Draw wireframe on top (toggleable)
+    if (showWireframe) {
+      ctx.drawImage(wireframeCanvas, 0, 0);
+    }
+
+    // 3. Draw visible overlays
     renderOverlaysToCanvas(ctx, overlays);
 
-    // 3. Draw annotations on top
+    // 4. Draw annotations on top
     renderAnnotationsToCanvas(ctx, useAnnotationStore.getState().annotations);
 
-    // 4. Force texture update on 3D model
+    // 5. Force texture update on 3D model
     uvTexture.needsUpdate = true;
-  }, [annotations, overlays, uvTexture, uvCanvas, wireframeCanvas]);
+  }, [annotations, overlays, uvTexture, uvCanvas, wireframeCanvas, backgroundImage, showWireframe, annImageTick]);
 
   // Measure container size and handle resize
   useEffect(() => {

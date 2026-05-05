@@ -6,7 +6,7 @@ import { AnnotationEditor } from './components/AnnotationEditor';
 import { MeshSelector } from './components/MeshSelector';
 import { AnnotationControls } from './components/AnnotationControls';
 import { SessionSidebar } from './components/SessionSidebar';
-import { AnnotationOutliner } from './components/layout/AnnotationOutliner';
+import { LeftSidebar } from './components/layout/LeftSidebar';
 import { PropertiesPanel } from './components/layout/PropertiesPanel';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 import { createNewSession, loadSession, saveCurrentSession } from './services/sessionManager';
@@ -54,9 +54,9 @@ function App() {
       <SessionSidebar isOpen={isSidebarOpen} onClose={() => setIsSidebarOpen(false)} />
 
       <PanelGroup direction="horizontal" className="flex-1" autoSaveId="uv-annotator-layout">
-        {/* Left Sidebar - Annotation Outliner */}
+        {/* Left Sidebar - Meshes + Annotations */}
         <Panel defaultSize={20} minSize={15} maxSize={30} collapsible>
-          <AnnotationOutliner />
+          <LeftSidebar />
         </Panel>
 
         <PanelResizeHandle className="w-1 bg-border hover:bg-primary/50 transition-colors" />

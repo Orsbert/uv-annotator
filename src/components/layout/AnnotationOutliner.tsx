@@ -1,4 +1,5 @@
-import { Eye, EyeOff, Plus, Copy, Trash2, Unlock } from 'lucide-react';
+import { useState } from 'react';
+import { ChevronDown, ChevronRight, Eye, EyeOff, Plus, Copy, Trash2, Unlock } from 'lucide-react';
 import { useAnnotationStore } from '../../store/combinedStores';
 import { ANNOTATION_COLORS } from '../../types';
 import { Button } from '../ui/button';
@@ -11,6 +12,8 @@ export function AnnotationOutliner() {
   const updateAnnotation = useAnnotationStore((state) => state.updateAnnotation);
   const addAnnotation = useAnnotationStore((state) => state.addAnnotation);
   const setPendingLabelEdit = useAnnotationStore((state) => state.setPendingLabelEdit);
+
+  const [open, setOpen] = useState(true);
 
   const handleDuplicate = (id: string) => {
     const original = annotations.find((a) => a.id === id);
@@ -48,77 +51,84 @@ export function AnnotationOutliner() {
   };
 
   return (
-    <div className="h-full flex flex-col bg-muted/30 border-r">
-      {/* Header */}
-      <div className="p-3 border-b">
-        <h2 className="text-sm font-semibold">Outliner</h2>
-      </div>
+    <div className="flex flex-col min-h-0">
+      {/* Section header */}
+      <button
+        className="w-full flex items-center gap-2 p-3 hover:bg-accent/50 text-sm font-semibold border-b"
+        onClick={() => setOpen(!open)}
+      >
+        {open ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+        Annotations
+        <span className="ml-auto text-xs text-muted-foreground">{annotations.length}</span>
+      </button>
 
-      {/* List */}
-      <div className="flex-1 overflow-auto">
-        {annotations.map((ann) => (
-          <div
-            key={ann.id}
-            className={`flex items-center gap-1 px-2 py-1 hover:bg-accent/50 cursor-pointer text-sm ${
-              ann.id === selectedAnnotationId ? 'bg-accent' : ''
-            }`}
-            onClick={() => setSelectedAnnotationId(ann.id)}
-          >
-            {/* Icon column */}
-            <button
-              className="p-0.5 hover:bg-accent-foreground/10 rounded"
-              onClick={(e) => {
-                e.stopPropagation();
-                updateAnnotation(ann.id, { visible: ann.visible !== false ? false : true });
-              }}
-            >
-              {ann.visible !== false ? <Eye className="h-3 w-3" /> : <EyeOff className="h-3 w-3 text-muted-foreground" />}
-            </button>
+      {open && (
+        <>
+          {/* List */}
+          <div className="flex-1 overflow-auto min-h-0">
+            {annotations.length === 0 && (
+              <p className="text-xs text-muted-foreground text-center py-3">No annotations</p>
+            )}
+            {annotations.map((ann) => (
+              <div
+                key={ann.id}
+                className={`flex items-center gap-1 px-2 py-1 hover:bg-accent/50 cursor-pointer text-sm ${
+                  ann.id === selectedAnnotationId ? 'bg-accent' : ''
+                }`}
+                onClick={() => setSelectedAnnotationId(ann.id)}
+              >
+                <button
+                  className="p-0.5 hover:bg-accent-foreground/10 rounded"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    updateAnnotation(ann.id, { visible: ann.visible !== false ? false : true });
+                  }}
+                >
+                  {ann.visible !== false ? <Eye className="h-3 w-3" /> : <EyeOff className="h-3 w-3 text-muted-foreground" />}
+                </button>
 
-            {/* Indicator */}
-            <div className={`w-1.5 h-1.5 rounded-full ${ann.id === selectedAnnotationId ? 'bg-primary' : 'bg-muted-foreground/30'}`} />
+                <div className={`w-1.5 h-1.5 rounded-full ${ann.id === selectedAnnotationId ? 'bg-primary' : 'bg-muted-foreground/30'}`} />
 
-            {/* Label */}
-            <span className="flex-1 truncate">{ann.label}</span>
+                <span className="flex-1 truncate">{ann.label}</span>
 
-            {/* Lock icon */}
-            <button
-              className="p-0.5 hover:bg-accent-foreground/10 rounded opacity-0 group-hover:opacity-100"
-              onClick={(e) => {
-                e.stopPropagation();
-                // Toggle lock (future feature)
-              }}
-            >
-              <Unlock className="h-3 w-3" />
-            </button>
+                <button
+                  className="p-0.5 hover:bg-accent-foreground/10 rounded opacity-0 group-hover:opacity-100"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                  }}
+                >
+                  <Unlock className="h-3 w-3" />
+                </button>
+              </div>
+            ))}
           </div>
-        ))}
-      </div>
 
-      {/* Actions */}
-      <div className="p-2 border-t flex gap-1">
-        <Button size="sm" variant="ghost" className="h-7 px-2" onClick={handleAdd}>
-          <Plus className="h-4 w-4" />
-        </Button>
-        <Button
-          size="sm"
-          variant="ghost"
-          className="h-7 px-2"
-          disabled={!selectedAnnotationId}
-          onClick={() => selectedAnnotationId && handleDuplicate(selectedAnnotationId)}
-        >
-          <Copy className="h-4 w-4" />
-        </Button>
-        <Button
-          size="sm"
-          variant="ghost"
-          className="h-7 px-2"
-          disabled={!selectedAnnotationId}
-          onClick={() => selectedAnnotationId && deleteAnnotation(selectedAnnotationId)}
-        >
-          <Trash2 className="h-4 w-4" />
-        </Button>
-      </div>
+          {/* Actions */}
+          <div className="p-2 border-t flex gap-1">
+            <Button size="sm" variant="ghost" className="h-7 px-2" onClick={handleAdd}>
+              <Plus className="h-4 w-4" />
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-7 px-2"
+              disabled={!selectedAnnotationId}
+              onClick={() => selectedAnnotationId && handleDuplicate(selectedAnnotationId)}
+            >
+              <Copy className="h-4 w-4" />
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-7 px-2"
+              disabled={!selectedAnnotationId}
+              onClick={() => selectedAnnotationId && deleteAnnotation(selectedAnnotationId)}
+            >
+              <Trash2 className="h-4 w-4" />
+            </Button>
+          </div>
+        </>
+      )}
     </div>
   );
 }

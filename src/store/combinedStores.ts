@@ -156,9 +156,16 @@ export interface CanvasState {
   uvTexture: THREE.CanvasTexture | null;
   uvImageData: string | null;
   canvasSize: CanvasSize;
+  backgroundImageData: string | null;
+  backgroundImageName: string | null;
+  backgroundImage: HTMLImageElement | null;
+  showWireframe: boolean;
   setUVCanvas: (canvas: HTMLCanvasElement | null) => void;
   setUVTexture: (texture: THREE.CanvasTexture | null) => void;
   setCanvasSize: (size: CanvasSize) => void;
+  setBackgroundImage: (dataUrl: string, name: string) => void;
+  clearBackgroundImage: () => void;
+  setShowWireframe: (show: boolean) => void;
   restoreCanvas: () => Promise<void>;
 }
 
@@ -169,6 +176,21 @@ export const useCanvasStore = create<CanvasState>()(
       uvTexture: null,
       uvImageData: null,
       canvasSize: 1024 as CanvasSize,
+      backgroundImageData: null,
+      backgroundImageName: null,
+      backgroundImage: null,
+      showWireframe: true,
+      setBackgroundImage: (dataUrl, name) => {
+        const img = new window.Image();
+        img.src = dataUrl;
+        img.onload = () => {
+          set({ backgroundImageData: dataUrl, backgroundImageName: name, backgroundImage: img });
+        };
+      },
+      clearBackgroundImage: () => {
+        set({ backgroundImageData: null, backgroundImageName: null, backgroundImage: null });
+      },
+      setShowWireframe: (show) => set({ showWireframe: show }),
       setUVCanvas: (canvas) => {
         const dataUrl = canvas ? canvas.toDataURL() : null;
         set({ uvCanvas: canvas, uvImageData: dataUrl });
@@ -245,7 +267,15 @@ export const useCanvasStore = create<CanvasState>()(
         }
       },
       restoreCanvas: async () => {
-        const { uvImageData } = get();
+        const { uvImageData, backgroundImageData } = get();
+
+        // Rehydrate background image (independent of UV canvas)
+        if (backgroundImageData) {
+          const bgImg = new window.Image();
+          bgImg.src = backgroundImageData;
+          bgImg.onload = () => set({ backgroundImage: bgImg });
+        }
+
         if (!uvImageData) return;
 
         const img = new Image();
@@ -261,7 +291,7 @@ export const useCanvasStore = create<CanvasState>()(
         if (ctx) {
           ctx.drawImage(img, 0, 0);
           set({ uvCanvas: canvas });
-          
+
           // Also recreate texture if needed, but ModelViewer handles creating texture from canvas if it's missing?
           // Actually ModelViewer uses uvTexture from store.
           // So we should recreate texture too.
@@ -275,7 +305,13 @@ export const useCanvasStore = create<CanvasState>()(
     {
       name: 'canvas-storage',
       storage: idbStorage as any,
-      partialize: (state) => ({ uvImageData: state.uvImageData, canvasSize: state.canvasSize }),
+      partialize: (state) => ({
+        uvImageData: state.uvImageData,
+        canvasSize: state.canvasSize,
+        backgroundImageData: state.backgroundImageData,
+        backgroundImageName: state.backgroundImageName,
+        showWireframe: state.showWireframe,
+      }),
       onRehydrateStorage: () => (state) => {
         if (state) {
           state.restoreCanvas();

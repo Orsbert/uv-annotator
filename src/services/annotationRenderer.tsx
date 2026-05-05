@@ -1,10 +1,41 @@
 // src/services/annotationRenderer.ts
 
 import type { Annotation } from '../types';
-import { getColorTheme } from '../types';
-import { Group, Rect, Text, Transformer } from 'react-konva';
+import { getColorTheme, computeImageRect } from '../types';
+import { Group, Rect, Text, Transformer, Image as KonvaImage } from 'react-konva';
 import { useEffect, useRef, useState } from 'react';
 import Konva from 'konva';
+
+const annotationImageCache = new Map<string, HTMLImageElement>();
+const annotationImageListeners = new Set<() => void>();
+
+export function getAnnotationImage(dataUrl: string): HTMLImageElement | null {
+  if (!dataUrl) return null;
+  const cached = annotationImageCache.get(dataUrl);
+  if (cached) return cached.complete && cached.naturalWidth > 0 ? cached : null;
+  const img = new window.Image();
+  img.onload = () => {
+    annotationImageListeners.forEach((cb) => cb());
+  };
+  img.src = dataUrl;
+  annotationImageCache.set(dataUrl, img);
+  return null;
+}
+
+export function subscribeAnnotationImages(cb: () => void): () => void {
+  annotationImageListeners.add(cb);
+  return () => { annotationImageListeners.delete(cb); };
+}
+
+function useAnnotationImage(dataUrl: string | undefined): HTMLImageElement | null {
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    if (!dataUrl) return;
+    if (annotationImageCache.get(dataUrl)?.complete) return;
+    return subscribeAnnotationImages(() => setTick((t) => t + 1));
+  }, [dataUrl]);
+  return dataUrl ? getAnnotationImage(dataUrl) : null;
+}
 
 interface AnnotationBoxProps {
   annotation: Annotation;
@@ -18,16 +49,27 @@ interface AnnotationBoxProps {
  * This is a React component that properly uses hooks.
  */
 export function AnnotationBox({ annotation, isSelected, onSelect, onChange }: AnnotationBoxProps) {
-  const { x, y, width, height, rotation, label, color } = annotation;
+  const { x, y, width, height, rotation, label, color, imageData, imageFit, imageAlign, imageOpacity } = annotation;
   const rectGroupRef = useRef<Konva.Group>(null);
   const rectRef = useRef<Konva.Rect>(null);
   const labelGroupRef = useRef<Konva.Group>(null);
   const transformerRef = useRef<Konva.Transformer>(null);
   const textRef = useRef<Konva.Text>(null);
   const [isHovered, setIsHovered] = useState(false);
+  const annImage = useAnnotationImage(imageData);
 
   // Get color theme
   const colorTheme = getColorTheme(color);
+
+  const imageRect = annImage
+    ? computeImageRect(
+        { x: 0, y: 0, width, height },
+        annImage.naturalWidth,
+        annImage.naturalHeight,
+        imageFit ?? 'contain',
+        imageAlign ?? 'center'
+      )
+    : null;
 
   // Attach transformer to the rectangle group only
   useEffect(() => {
@@ -123,6 +165,32 @@ export function AnnotationBox({ annotation, isSelected, onSelect, onChange }: An
           }
         }}
       >
+        {/* Image inside box (clipped to rect) */}
+        {annImage && imageRect && (
+          <Group
+            offsetX={width / 2}
+            offsetY={height / 2}
+            clipFunc={(ctx) => {
+              ctx.rect(0, 0, width, height);
+            }}
+          >
+            <KonvaImage
+              image={annImage}
+              x={imageRect.dx}
+              y={imageRect.dy}
+              width={imageRect.dw}
+              height={imageRect.dh}
+              crop={
+                imageRect.sx !== 0 || imageRect.sy !== 0 || imageRect.sw !== annImage.naturalWidth || imageRect.sh !== annImage.naturalHeight
+                  ? { x: imageRect.sx, y: imageRect.sy, width: imageRect.sw, height: imageRect.sh }
+                  : undefined
+              }
+              opacity={imageOpacity ?? 1}
+              listening={false}
+            />
+          </Group>
+        )}
+
         {/* Main rectangle - centered */}
         <Rect
           ref={rectRef}
@@ -133,7 +201,7 @@ export function AnnotationBox({ annotation, isSelected, onSelect, onChange }: An
           stroke={colorTheme.main}
           strokeWidth={isSelected ? 2 : 1.5}
           fill={colorTheme.light}
-          opacity={isHovered || isSelected ? 0.5 : 0.35}
+          opacity={annImage ? (isHovered || isSelected ? 0.25 : 0.12) : (isHovered || isSelected ? 0.5 : 0.35)}
         />
       </Group>
 
@@ -196,7 +264,7 @@ export function AnnotationBox({ annotation, isSelected, onSelect, onChange }: An
  */
 export function renderAnnotationToCanvas(ctx: CanvasRenderingContext2D, ann: Annotation) {
   if (ann.visible === false) return;
-  const { x, y, width, height, rotation, label, color } = ann;
+  const { x, y, width, height, rotation, label, color, imageData, imageFit, imageAlign, imageOpacity } = ann;
   const colorTheme = getColorTheme(color);
 
   ctx.save();
@@ -205,9 +273,28 @@ export function renderAnnotationToCanvas(ctx: CanvasRenderingContext2D, ann: Ann
   ctx.rotate((rotation * Math.PI) / 180);
   ctx.translate(-(x + width / 2), -(y + height / 2));
 
-  // Filled rectangle
+  // Image inside box (clipped to rect)
+  const annImage = imageData ? getAnnotationImage(imageData) : null;
+  if (annImage) {
+    const r = computeImageRect(
+      { x, y, width, height },
+      annImage.naturalWidth,
+      annImage.naturalHeight,
+      imageFit ?? 'contain',
+      imageAlign ?? 'center'
+    );
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(x, y, width, height);
+    ctx.clip();
+    ctx.globalAlpha = imageOpacity ?? 1;
+    ctx.drawImage(annImage, r.sx, r.sy, r.sw, r.sh, r.dx, r.dy, r.dw, r.dh);
+    ctx.restore();
+  }
+
+  // Filled rectangle (reduced alpha when an image is present so it stays readable)
   ctx.fillStyle = colorTheme.light;
-  ctx.globalAlpha = 0.35;
+  ctx.globalAlpha = annImage ? 0.15 : 0.35;
   ctx.fillRect(x, y, width, height);
   ctx.globalAlpha = 1.0;
 
