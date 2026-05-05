@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { useAnnotationStore, useModelStore, useCanvasStore, usePaintStore, useOverlayStore } from '../store/combinedStores';
+import { useAnnotationStore, useModelStore, useCanvasStore, usePaintStore, useOverlayStore, meshKeyOf, useHistoryStore } from '../store/combinedStores';
 import type { Annotation } from '../types';
 
 export function useKeyboardShortcuts() {
@@ -8,7 +8,8 @@ export function useKeyboardShortcuts() {
   const deleteAnnotation = useAnnotationStore((state) => state.deleteAnnotation);
   const setSelectedAnnotationId = useAnnotationStore((state) => state.setSelectedAnnotationId);
   const selectedMesh = useModelStore((state) => state.selectedMesh);
-  const uvCanvas = useCanvasStore((state) => state.uvCanvas);
+  const meshKey = meshKeyOf(selectedMesh);
+  const uvCanvas = useCanvasStore((state) => state.canvasByMesh[meshKey] ?? null);
   const isPaintMode = usePaintStore((state) => state.isPaintMode);
   const setPaintMode = usePaintStore((state) => state.setPaintMode);
 
@@ -18,6 +19,8 @@ export function useKeyboardShortcuts() {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
         return;
       }
+      // Another listener already handled this (e.g., axis-lock cleared Escape)
+      if (e.defaultPrevented) return;
 
       // A - Add new annotation
       if (e.key === 'a' || e.key === 'A') {
@@ -60,8 +63,8 @@ export function useKeyboardShortcuts() {
         }
       }
 
-      // G - Generate UV layout
-      if (e.key === 'g' || e.key === 'G') {
+      // U - Generate UV layout (G is now the Blender gizmo "translate" shortcut)
+      if (e.key === 'u' || e.key === 'U') {
         e.preventDefault();
         if (selectedMesh) {
           const event = new CustomEvent('generate-uv');
@@ -76,6 +79,17 @@ export function useKeyboardShortcuts() {
           const event = new CustomEvent('export-texture');
           window.dispatchEvent(event);
         }
+      }
+
+      // Cmd/Ctrl + Z = Undo, Cmd/Ctrl + Shift + Z (or Ctrl + Y) = Redo
+      if ((e.ctrlKey || e.metaKey) && (e.key === 'z' || e.key === 'Z')) {
+        e.preventDefault();
+        if (e.shiftKey) useHistoryStore.getState().redo();
+        else useHistoryStore.getState().undo();
+      }
+      if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || e.key === 'Y')) {
+        e.preventDefault();
+        useHistoryStore.getState().redo();
       }
 
       // T - Toggle all overlay visibility

@@ -2,13 +2,110 @@
 
 import { create } from 'zustand';
 import { persist, StorageValue } from 'zustand/middleware';
+import { temporal } from 'zundo';
 import { get, set, del } from 'idb-keyval';
 import * as THREE from 'three';
 import { GLTFLoader } from 'three-stdlib';
 import type { Annotation } from '../types';
 import { ANNOTATION_COLORS } from '../types';
 
-type PersistedModelState = Pick<ModelState, 'modelBuffer' | 'modelName' | 'selectedMeshName'>;
+// Tiny trailing-edge debouncer used to coalesce rapid state changes (drags, scrubs,
+// slider tweaks) into one undo entry per "gesture". Returns a debounced version
+// of the same function with the same call signature.
+function debounce<T extends (...args: any[]) => void>(fn: T, ms: number): T {
+  let t: ReturnType<typeof setTimeout> | null = null;
+  return ((...args: Parameters<T>) => {
+    if (t) clearTimeout(t);
+    t = setTimeout(() => fn(...args), ms);
+  }) as T;
+}
+
+type PersistedModelState = Pick<ModelState, 'modelBuffer' | 'modelName' | 'selectedMeshName' | 'transformsByMesh'>;
+
+export function meshKeyOf(mesh: { name: string; uuid: string } | null | undefined): string {
+  if (!mesh) return '';
+  return mesh.name || mesh.uuid;
+}
+
+// Stable empty-array reference — used as `?? EMPTY_ANNOTATIONS` in selectors so
+// React's useSyncExternalStore comparison doesn't see a new reference every render.
+export const EMPTY_ANNOTATIONS: Annotation[] = [];
+
+/* -------------------------------------------------------------------------- */
+/* UI mode store (transient — not persisted, not undoable)                     */
+/* -------------------------------------------------------------------------- */
+
+// Blender-style axis constraint for the transform gizmo.
+//   'x' / 'y' / 'z'    → only that axis is interactive
+//   'no-x' / 'no-y' / 'no-z' → that axis is hidden (Blender's Shift+X "all but X" plane lock)
+//   null               → unconstrained, all 3 handles visible
+export type AxisLock = null | 'x' | 'y' | 'z' | 'no-x' | 'no-y' | 'no-z';
+
+interface UiState {
+  surfaceDragMode: boolean;       // user toggle: drag selected mesh along nearby surfaces
+  surfaceDragActive: boolean;     // transient: a drag is in progress, freeze OrbitControls
+  axisLock: AxisLock;
+  setSurfaceDragMode: (v: boolean) => void;
+  setSurfaceDragActive: (v: boolean) => void;
+  setAxisLock: (a: AxisLock) => void;
+}
+
+export const useUiStore = create<UiState>((set) => ({
+  surfaceDragMode: false,
+  surfaceDragActive: false,
+  axisLock: null,
+  setSurfaceDragMode: (surfaceDragMode) => set({ surfaceDragMode }),
+  setSurfaceDragActive: (surfaceDragActive) => set({ surfaceDragActive }),
+  setAxisLock: (axisLock) => set({ axisLock }),
+}));
+
+/* -------------------------------------------------------------------------- */
+/* Cross-store undo / redo coordinator                                         */
+/* -------------------------------------------------------------------------- */
+
+export type UndoStoreName = 'annotation' | 'model' | 'canvas' | 'overlay';
+
+// Filled in after each store is created. Lets the coordinator call undo/redo
+// without static circular imports.
+const temporalRegistry: Partial<Record<UndoStoreName, {
+  undo: () => void;
+  redo: () => void;
+  clearFuture: () => void;
+}>> = {};
+
+interface HistoryState {
+  past: UndoStoreName[];
+  future: UndoStoreName[];
+  push: (name: UndoStoreName) => void;
+  undo: () => void;
+  redo: () => void;
+  clear: () => void;
+}
+
+export const useHistoryStore = create<HistoryState>((setState, getState) => ({
+  past: [],
+  future: [],
+  push: (name) => {
+    // Any new edit invalidates the redo branch on every store, not just this one.
+    Object.values(temporalRegistry).forEach((t) => t?.clearFuture());
+    setState((s) => ({ past: [...s.past, name], future: [] }));
+  },
+  undo: () => {
+    const { past } = getState();
+    if (past.length === 0) return;
+    const last = past[past.length - 1];
+    temporalRegistry[last]?.undo();
+    setState((s) => ({ past: s.past.slice(0, -1), future: [...s.future, last] }));
+  },
+  redo: () => {
+    const { future } = getState();
+    if (future.length === 0) return;
+    const next = future[future.length - 1];
+    temporalRegistry[next]?.redo();
+    setState((s) => ({ future: s.future.slice(0, -1), past: [...s.past, next] }));
+  },
+  clear: () => setState({ past: [], future: [] }),
+}));
 
 // Custom storage object for IndexedDB that supports ArrayBuffer via Structured Clone
 const idbStorage = {
@@ -24,7 +121,12 @@ const idbStorage = {
 };
 
 /** Model Store */
-/** Model Store */
+export type MeshTransform = {
+  position: [number, number, number];
+  rotation: [number, number, number];
+  scale: [number, number, number];
+};
+
 export interface ModelState {
   model: THREE.Group | null;
   selectedMesh: THREE.Mesh | null;
@@ -32,28 +134,47 @@ export interface ModelState {
   modelBuffer: ArrayBuffer | null;
   modelName: string | null;
   selectedMeshName: string | null;
+  transformsByMesh: Record<string, MeshTransform>;
   setModel: (model: THREE.Group | null) => void;
   setMeshes: (meshes: THREE.Mesh[]) => void;
   setSelectedMesh: (mesh: THREE.Mesh | null) => void;
   setModelBuffer: (buffer: ArrayBuffer | null, name: string | null) => void;
+  setMeshTransform: (meshKey: string, transform: Partial<MeshTransform>) => void;
   loadModelFromBuffer: () => Promise<void>;
 }
 
 export const useModelStore = create<ModelState>()(
-  persist(
-    (set, get) => ({
+  temporal(
+    persist(
+      (set, get) => ({
       model: null,
       selectedMesh: null,
       meshes: [],
       modelBuffer: null,
       modelName: null,
       selectedMeshName: null,
+      transformsByMesh: {},
       setModel: (model) => set({ model }),
       setMeshes: (meshes) => set({ meshes }),
       setSelectedMesh: (mesh) => set({ selectedMesh: mesh, selectedMeshName: mesh?.name || null }),
       setModelBuffer: (buffer, name) => {
         console.log('setModelBuffer called. Name:', name, 'Size:', buffer?.byteLength);
         set({ modelBuffer: buffer, modelName: name });
+      },
+      setMeshTransform: (meshKey, partial) => {
+        set((state) => {
+          const current = state.transformsByMesh[meshKey] ?? {
+            position: [0, 0, 0],
+            rotation: [0, 0, 0],
+            scale: [1, 1, 1],
+          };
+          const next: MeshTransform = {
+            position: partial.position ?? current.position,
+            rotation: partial.rotation ?? current.rotation,
+            scale: partial.scale ?? current.scale,
+          };
+          return { transformsByMesh: { ...state.transformsByMesh, [meshKey]: next } };
+        });
       },
       loadModelFromBuffer: async () => {
         const { modelBuffer } = get();
@@ -75,10 +196,20 @@ export const useModelStore = create<ModelState>()(
             }
           });
 
-          const { selectedMeshName } = get();
+          const { selectedMeshName, transformsByMesh } = get();
           let selectedMesh = null;
           if (selectedMeshName) {
             selectedMesh = meshes.find(m => m.name === selectedMeshName) || null;
+          }
+
+          // Re-apply any persisted per-mesh transforms to the freshly-loaded scene
+          for (const m of meshes) {
+            const t = transformsByMesh[meshKeyOf(m)];
+            if (!t) continue;
+            m.position.fromArray(t.position);
+            m.rotation.set(t.rotation[0], t.rotation[1], t.rotation[2]);
+            m.scale.fromArray(t.scale);
+            m.updateMatrix();
           }
 
           set({ model: result.scene, meshes, selectedMesh });
@@ -94,6 +225,7 @@ export const useModelStore = create<ModelState>()(
         modelBuffer: state.modelBuffer,
         modelName: state.modelName,
         selectedMeshName: state.selectedMeshName,
+        transformsByMesh: state.transformsByMesh,
       }),
       onRehydrateStorage: () => (state) => {
         if (state) {
@@ -101,154 +233,241 @@ export const useModelStore = create<ModelState>()(
         }
       },
     }
+  ),
+  {
+    // Only the per-mesh transform map is undoable. Selection / model file etc. aren't.
+    partialize: (state) => ({ transformsByMesh: state.transformsByMesh }),
+    limit: 100,
+    handleSet: (handleSet) => debounce(handleSet as any, 250),
+    onSave: () => useHistoryStore.getState().push('model'),
+  }
   )
 );
 
-/** Annotation Store */
+// Sync persisted/undone transforms back to live meshes whenever the map changes.
+useModelStore.subscribe((state, prev) => {
+  if (state.transformsByMesh === prev.transformsByMesh) return;
+  for (const m of state.meshes) {
+    const t = state.transformsByMesh[meshKeyOf(m)];
+    if (!t) continue;
+    m.position.fromArray(t.position);
+    m.rotation.set(t.rotation[0], t.rotation[1], t.rotation[2]);
+    m.scale.fromArray(t.scale);
+    m.updateMatrix();
+  }
+});
+
+temporalRegistry.model = {
+  undo: () => useModelStore.temporal.getState().undo(),
+  redo: () => useModelStore.temporal.getState().redo(),
+  clearFuture: () => useModelStore.temporal.setState({ futureStates: [] }),
+};
+
+/** Annotation Store (per-mesh) */
 export interface AnnotationState {
-  annotations: Annotation[];
+  annotationsByMesh: Record<string, Annotation[]>;
   selectedAnnotationId: string | null;
   pendingLabelEdit: string | null;
-  addAnnotation: (annotation: Annotation) => void;
+  addAnnotation: (annotation: Annotation, meshKey?: string) => void;
   updateAnnotation: (id: string, updates: Partial<Annotation>) => void;
   deleteAnnotation: (id: string) => void;
   setSelectedAnnotationId: (id: string | null) => void;
   setPendingLabelEdit: (id: string | null) => void;
-  clearAnnotations: () => void;
+  clearAnnotations: (meshKey?: string) => void;
 }
+
+function currentMeshKey(): string {
+  return meshKeyOf(useModelStore.getState().selectedMesh);
+}
+
 export const useAnnotationStore = create<AnnotationState>()(
-  persist(
+  temporal(
+    persist(
     (set) => ({
-      annotations: [],
+      annotationsByMesh: {},
       selectedAnnotationId: null,
       pendingLabelEdit: null,
-      addAnnotation: (annotation) =>
+      addAnnotation: (annotation, meshKey) => {
+        const key = meshKey ?? currentMeshKey();
         set((state) => ({
-          annotations: [...state.annotations, annotation],
+          annotationsByMesh: {
+            ...state.annotationsByMesh,
+            [key]: [...(state.annotationsByMesh[key] ?? []), annotation],
+          },
           selectedAnnotationId: annotation.id,
-        })),
-      updateAnnotation: (id, updates) =>
-        set((state) => ({
-          annotations: state.annotations.map((ann) => (ann.id === id ? { ...ann, ...updates } : ann)),
-        })),
-      deleteAnnotation: (id) =>
-        set((state) => ({
-          annotations: state.annotations.filter((ann) => ann.id !== id),
-          selectedAnnotationId: state.selectedAnnotationId === id ? null : state.selectedAnnotationId,
-        })),
+        }));
+      },
+      updateAnnotation: (id, updates) => {
+        set((state) => {
+          const next: Record<string, Annotation[]> = { ...state.annotationsByMesh };
+          for (const key of Object.keys(next)) {
+            const arr = next[key];
+            const idx = arr.findIndex((a) => a.id === id);
+            if (idx >= 0) {
+              const newArr = arr.slice();
+              newArr[idx] = { ...arr[idx], ...updates };
+              next[key] = newArr;
+              break;
+            }
+          }
+          return { annotationsByMesh: next };
+        });
+      },
+      deleteAnnotation: (id) => {
+        set((state) => {
+          const next: Record<string, Annotation[]> = { ...state.annotationsByMesh };
+          for (const key of Object.keys(next)) {
+            const arr = next[key];
+            const idx = arr.findIndex((a) => a.id === id);
+            if (idx >= 0) {
+              next[key] = arr.filter((a) => a.id !== id);
+              break;
+            }
+          }
+          return {
+            annotationsByMesh: next,
+            selectedAnnotationId: state.selectedAnnotationId === id ? null : state.selectedAnnotationId,
+          };
+        });
+      },
       setSelectedAnnotationId: (id) => set({ selectedAnnotationId: id }),
       setPendingLabelEdit: (id) => set({ pendingLabelEdit: id }),
-      clearAnnotations: () => set({ annotations: [], selectedAnnotationId: null }),
+      clearAnnotations: (meshKey) => {
+        const key = meshKey ?? currentMeshKey();
+        set((state) => ({
+          annotationsByMesh: { ...state.annotationsByMesh, [key]: [] },
+          selectedAnnotationId: null,
+        }));
+      },
     }),
     {
       name: 'annotation-storage',
-      partialize: (state) => ({ annotations: state.annotations }),
+      partialize: (state) => ({ annotationsByMesh: state.annotationsByMesh }),
+      onRehydrateStorage: () => (state) => {
+        if (!state) return;
+        // Migrate from legacy flat `annotations` array → annotationsByMesh[''] bucket.
+        const legacy = (state as any).annotations;
+        if (Array.isArray(legacy) && legacy.length > 0 && Object.keys(state.annotationsByMesh ?? {}).length === 0) {
+          const fallbackKey = useModelStore.getState().selectedMeshName ?? '';
+          state.annotationsByMesh = { [fallbackKey]: legacy as Annotation[] };
+          delete (state as any).annotations;
+        }
+      },
     }
+  ),
+  {
+    partialize: (state) => ({ annotationsByMesh: state.annotationsByMesh }),
+    limit: 100,
+    handleSet: (handleSet) => debounce(handleSet as any, 250),
+    onSave: () => useHistoryStore.getState().push('annotation'),
+  }
   )
 );
+
+temporalRegistry.annotation = {
+  undo: () => useAnnotationStore.temporal.getState().undo(),
+  redo: () => useAnnotationStore.temporal.getState().redo(),
+  clearFuture: () => useAnnotationStore.temporal.setState({ futureStates: [] }),
+};
 
 /** Canvas Store */
 export const CANVAS_SCALE_OPTIONS = [1024, 2048, 3072, 4096] as const;
 export type CanvasSize = (typeof CANVAS_SCALE_OPTIONS)[number];
 
 export interface CanvasState {
-  uvCanvas: HTMLCanvasElement | null;
-  uvTexture: THREE.CanvasTexture | null;
-  uvImageData: string | null;
   canvasSize: CanvasSize;
-  backgroundImageData: string | null;
-  backgroundImageName: string | null;
-  backgroundImage: HTMLImageElement | null;
   showWireframe: boolean;
-  setUVCanvas: (canvas: HTMLCanvasElement | null) => void;
-  setUVTexture: (texture: THREE.CanvasTexture | null) => void;
-  setCanvasSize: (size: CanvasSize) => void;
-  setBackgroundImage: (dataUrl: string, name: string) => void;
-  clearBackgroundImage: () => void;
+
+  // Per-mesh runtime maps (not persisted)
+  canvasByMesh: Record<string, HTMLCanvasElement>;
+  textureByMesh: Record<string, THREE.CanvasTexture>;
+  backgroundImagesByMesh: Record<string, HTMLImageElement>;
+
+  // Per-mesh persisted maps
+  backgroundsByMesh: Record<string, { imageData: string; imageName: string }>;
+  // Opacity applied to the "base" layers of each mesh's texture (background + wireframe
+  // + overlays + annotation fills/labels). In-box decal images stay at full alpha.
+  baseOpacityByMesh: Record<string, number>;
+
+  setMeshCanvas: (meshKey: string, canvas: HTMLCanvasElement, texture: THREE.CanvasTexture) => void;
+  clearMeshCanvas: (meshKey: string) => void;
+  setBackgroundImage: (dataUrl: string, name: string, meshKey?: string) => void;
+  clearBackgroundImage: (meshKey?: string) => void;
   setShowWireframe: (show: boolean) => void;
-  restoreCanvas: () => Promise<void>;
+  setBaseOpacity: (meshKey: string, opacity: number) => void;
+  setCanvasSize: (size: CanvasSize) => void;
+  restoreBackgrounds: () => Promise<void>;
 }
 
 export const useCanvasStore = create<CanvasState>()(
-  persist(
+  temporal(
+    persist(
     (set, get) => ({
-      uvCanvas: null,
-      uvTexture: null,
-      uvImageData: null,
       canvasSize: 1024 as CanvasSize,
-      backgroundImageData: null,
-      backgroundImageName: null,
-      backgroundImage: null,
       showWireframe: true,
-      setBackgroundImage: (dataUrl, name) => {
+      canvasByMesh: {},
+      textureByMesh: {},
+      backgroundImagesByMesh: {},
+      backgroundsByMesh: {},
+      baseOpacityByMesh: {},
+
+      setBaseOpacity: (meshKey, opacity) => {
+        set((state) => ({
+          baseOpacityByMesh: { ...state.baseOpacityByMesh, [meshKey]: opacity },
+        }));
+      },
+
+      setMeshCanvas: (meshKey, canvas, texture) => {
+        set((state) => ({
+          canvasByMesh: { ...state.canvasByMesh, [meshKey]: canvas },
+          textureByMesh: { ...state.textureByMesh, [meshKey]: texture },
+        }));
+      },
+
+      clearMeshCanvas: (meshKey) => {
+        set((state) => {
+          const c = { ...state.canvasByMesh };
+          const t = { ...state.textureByMesh };
+          delete c[meshKey];
+          delete t[meshKey];
+          return { canvasByMesh: c, textureByMesh: t };
+        });
+      },
+
+      setBackgroundImage: (dataUrl, name, meshKey) => {
+        const key = meshKey ?? meshKeyOf(useModelStore.getState().selectedMesh);
         const img = new window.Image();
         img.src = dataUrl;
         img.onload = () => {
-          set({ backgroundImageData: dataUrl, backgroundImageName: name, backgroundImage: img });
+          set((state) => ({
+            backgroundsByMesh: { ...state.backgroundsByMesh, [key]: { imageData: dataUrl, imageName: name } },
+            backgroundImagesByMesh: { ...state.backgroundImagesByMesh, [key]: img },
+          }));
         };
       },
-      clearBackgroundImage: () => {
-        set({ backgroundImageData: null, backgroundImageName: null, backgroundImage: null });
+
+      clearBackgroundImage: (meshKey) => {
+        const key = meshKey ?? meshKeyOf(useModelStore.getState().selectedMesh);
+        set((state) => {
+          const b = { ...state.backgroundsByMesh };
+          const i = { ...state.backgroundImagesByMesh };
+          delete b[key];
+          delete i[key];
+          return { backgroundsByMesh: b, backgroundImagesByMesh: i };
+        });
       },
+
       setShowWireframe: (show) => set({ showWireframe: show }),
-      setUVCanvas: (canvas) => {
-        const dataUrl = canvas ? canvas.toDataURL() : null;
-        set({ uvCanvas: canvas, uvImageData: dataUrl });
-      },
-      setUVTexture: (texture) => set({ uvTexture: texture }),
+
       setCanvasSize: (size) => {
         const oldSize = get().canvasSize;
         if (size === oldSize) return;
         const ratio = size / oldSize;
 
-        const { selectedMesh } = useModelStore.getState();
-        if (selectedMesh) {
-          // Regenerate UV layout at new size FIRST, then apply all changes together
-          import('../utils/uvGenerator').then(({ generateUVLayout }) => {
-            const { canvas, texture } = generateUVLayout(selectedMesh, size);
-
-            // Scale all annotations proportionally
-            const { annotations, updateAnnotation } = useAnnotationStore.getState();
-            annotations.forEach((ann) => {
-              updateAnnotation(ann.id, {
-                x: ann.x * ratio,
-                y: ann.y * ratio,
-                width: ann.width * ratio,
-                height: ann.height * ratio,
-              });
-            });
-
-            // Scale all overlays proportionally
-            const { overlays, updateOverlay } = useOverlayStore.getState();
-            overlays.forEach((o) => {
-              updateOverlay(o.id, {
-                x: o.x * ratio, y: o.y * ratio,
-                scaleX: o.scaleX * ratio, scaleY: o.scaleY * ratio,
-              });
-            });
-
-            // Draw scaled annotations onto the new canvas
-            const ctx = canvas.getContext('2d');
-            if (ctx) {
-              import('../services/annotationRenderer').then(({ renderAnnotationsToCanvas, renderOverlaysToCanvas }) => {
-                const currentOverlays = useOverlayStore.getState().overlays;
-                renderOverlaysToCanvas(ctx, currentOverlays);
-                const currentAnnotations = useAnnotationStore.getState().annotations;
-                renderAnnotationsToCanvas(ctx, currentAnnotations);
-                texture.needsUpdate = true;
-                // Set everything at once so nothing flashes
-                const dataUrl = canvas.toDataURL();
-                set({ canvasSize: size, uvCanvas: canvas, uvTexture: texture, uvImageData: dataUrl });
-              });
-            } else {
-              const dataUrl = canvas.toDataURL();
-              set({ canvasSize: size, uvCanvas: canvas, uvTexture: texture, uvImageData: dataUrl });
-            }
-          });
-        } else {
-          // No mesh — just scale annotations/overlay and update size
-          const { annotations, updateAnnotation } = useAnnotationStore.getState();
-          annotations.forEach((ann) => {
+        // Scale all per-mesh annotations
+        const { annotationsByMesh, updateAnnotation } = useAnnotationStore.getState();
+        Object.values(annotationsByMesh).forEach((arr) => {
+          arr.forEach((ann) => {
             updateAnnotation(ann.id, {
               x: ann.x * ratio,
               y: ann.y * ratio,
@@ -256,70 +475,70 @@ export const useCanvasStore = create<CanvasState>()(
               height: ann.height * ratio,
             });
           });
-          const { overlays, updateOverlay } = useOverlayStore.getState();
-          overlays.forEach((o) => {
-            updateOverlay(o.id, {
-              x: o.x * ratio, y: o.y * ratio,
-              scaleX: o.scaleX * ratio, scaleY: o.scaleY * ratio,
-            });
-          });
-          set({ canvasSize: size });
-        }
-      },
-      restoreCanvas: async () => {
-        const { uvImageData, backgroundImageData } = get();
-
-        // Rehydrate background image (independent of UV canvas)
-        if (backgroundImageData) {
-          const bgImg = new window.Image();
-          bgImg.src = backgroundImageData;
-          bgImg.onload = () => set({ backgroundImage: bgImg });
-        }
-
-        if (!uvImageData) return;
-
-        const img = new Image();
-        img.src = uvImageData;
-        await new Promise((resolve) => {
-          img.onload = resolve;
         });
 
-        const canvas = document.createElement('canvas');
-        canvas.width = img.width;
-        canvas.height = img.height;
-        const ctx = canvas.getContext('2d');
-        if (ctx) {
-          ctx.drawImage(img, 0, 0);
-          set({ uvCanvas: canvas });
+        // Scale all overlays (still global)
+        const { overlays, updateOverlay } = useOverlayStore.getState();
+        overlays.forEach((o) => {
+          updateOverlay(o.id, {
+            x: o.x * ratio, y: o.y * ratio,
+            scaleX: o.scaleX * ratio, scaleY: o.scaleY * ratio,
+          });
+        });
 
-          // Also recreate texture if needed, but ModelViewer handles creating texture from canvas if it's missing?
-          // Actually ModelViewer uses uvTexture from store.
-          // So we should recreate texture too.
-          const texture = new THREE.CanvasTexture(canvas);
-          texture.colorSpace = THREE.SRGBColorSpace;
-          texture.flipY = false;
-          set({ uvTexture: texture });
-        }
+        // Drop all per-mesh canvases — they will regenerate at the new size on next selection.
+        set({ canvasSize: size, canvasByMesh: {}, textureByMesh: {} });
+      },
+
+      restoreBackgrounds: async () => {
+        const { backgroundsByMesh } = get();
+        const restored: Record<string, HTMLImageElement> = {};
+        await Promise.all(
+          Object.entries(backgroundsByMesh).map(async ([key, bg]) => {
+            const img = new window.Image();
+            img.src = bg.imageData;
+            await new Promise((resolve) => { img.onload = resolve; });
+            restored[key] = img;
+          })
+        );
+        set({ backgroundImagesByMesh: restored });
       },
     }),
     {
       name: 'canvas-storage',
       storage: idbStorage as any,
       partialize: (state) => ({
-        uvImageData: state.uvImageData,
         canvasSize: state.canvasSize,
-        backgroundImageData: state.backgroundImageData,
-        backgroundImageName: state.backgroundImageName,
         showWireframe: state.showWireframe,
+        backgroundsByMesh: state.backgroundsByMesh,
+        baseOpacityByMesh: state.baseOpacityByMesh,
       }),
       onRehydrateStorage: () => (state) => {
         if (state) {
-          state.restoreCanvas();
+          state.restoreBackgrounds();
         }
       },
     }
+  ),
+  {
+    partialize: (state) => ({
+      backgroundsByMesh: state.backgroundsByMesh,
+      backgroundImagesByMesh: state.backgroundImagesByMesh,
+      baseOpacityByMesh: state.baseOpacityByMesh,
+      showWireframe: state.showWireframe,
+    }),
+    limit: 100,
+    handleSet: (handleSet) => debounce(handleSet as any, 250),
+    onSave: () => useHistoryStore.getState().push('canvas'),
+  }
   )
 );
+
+temporalRegistry.canvas = {
+  undo: () => useCanvasStore.temporal.getState().undo(),
+  redo: () => useCanvasStore.temporal.getState().redo(),
+  clearFuture: () => useCanvasStore.temporal.setState({ futureStates: [] }),
+};
 
 /** Overlay Store */
 export interface OverlayItem {
@@ -350,7 +569,8 @@ export interface OverlayState {
 }
 
 export const useOverlayStore = create<OverlayState>()(
-  persist(
+  temporal(
+    persist(
     (set, get) => ({
       overlays: [],
       selectedOverlayId: null,
@@ -434,8 +654,21 @@ export const useOverlayStore = create<OverlayState>()(
         }
       },
     }
+  ),
+  {
+    partialize: (state) => ({ overlays: state.overlays }),
+    limit: 100,
+    handleSet: (handleSet) => debounce(handleSet as any, 250),
+    onSave: () => useHistoryStore.getState().push('overlay'),
+  }
   )
 );
+
+temporalRegistry.overlay = {
+  undo: () => useOverlayStore.temporal.getState().undo(),
+  redo: () => useOverlayStore.temporal.getState().redo(),
+  clearFuture: () => useOverlayStore.temporal.setState({ futureStates: [] }),
+};
 
 /** Paint Store */
 export interface PaintState {
@@ -459,8 +692,11 @@ export const usePaintStore = create<PaintState>()(
       setBrushSize: (size) => set({ brushSize: size }),
       addPaintedUVCoord: (coord) => {
         const state = get();
-        // Access uvCanvas and uvTexture from the CanvasStore
-        const { uvCanvas, uvTexture } = useCanvasStore.getState();
+        const { selectedMesh } = useModelStore.getState();
+        const meshKey = meshKeyOf(selectedMesh);
+        const { canvasByMesh, textureByMesh } = useCanvasStore.getState();
+        const uvCanvas = canvasByMesh[meshKey];
+        const uvTexture = textureByMesh[meshKey];
         const { brushSize } = state;
 
         if (!uvCanvas) return;
@@ -479,9 +715,13 @@ export const usePaintStore = create<PaintState>()(
       // Implement createAnnotationFromPaint by delegating to existing useStore logic
       createAnnotationFromPaint: () => {
         const { paintedUVCoords, setPaintMode } = get();
-        const { uvCanvas, uvTexture } = useCanvasStore.getState();
         const { selectedMesh } = useModelStore.getState();
-        const { annotations, addAnnotation, setPendingLabelEdit } = useAnnotationStore.getState();
+        const meshKey = meshKeyOf(selectedMesh);
+        const { canvasByMesh, textureByMesh } = useCanvasStore.getState();
+        const uvCanvas = canvasByMesh[meshKey];
+        const uvTexture = textureByMesh[meshKey];
+        const { annotationsByMesh, addAnnotation, setPendingLabelEdit } = useAnnotationStore.getState();
+        const annotations = annotationsByMesh[meshKey] ?? [];
 
         if (paintedUVCoords.length === 0 || !uvCanvas) return;
 
@@ -522,7 +762,7 @@ export const usePaintStore = create<PaintState>()(
         };
 
         // Update stores
-        addAnnotation(newAnnotation);
+        addAnnotation(newAnnotation, meshKey);
         setPaintMode(false);
         setPendingLabelEdit(newAnnotation.id);
 
@@ -539,7 +779,7 @@ export const usePaintStore = create<PaintState>()(
             ctx.drawImage(newCanvas, 0, 0);
 
             // 2. Draw overlays and annotations
-            const currentAnnotations = useAnnotationStore.getState().annotations;
+            const currentAnnotations = useAnnotationStore.getState().annotationsByMesh[meshKey] ?? [];
             import('../services/annotationRenderer').then(({ renderAnnotationsToCanvas, renderOverlaysToCanvas }) => {
                 const currentOverlays = useOverlayStore.getState().overlays;
                 renderOverlaysToCanvas(ctx, currentOverlays);

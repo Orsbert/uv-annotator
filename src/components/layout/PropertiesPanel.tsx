@@ -1,12 +1,13 @@
 import { useState } from 'react';
 import { ChevronDown, ChevronRight, ImagePlus, Trash2 } from 'lucide-react';
-import { useAnnotationStore } from '../../store/combinedStores';
+import { useAnnotationStore, useModelStore, meshKeyOf, EMPTY_ANNOTATIONS } from '../../store/combinedStores';
 import type { ImageAlign, ImageFit } from '../../types';
 import { Input } from '../ui/input';
 import { Label } from '../ui/label';
 import { Button } from '../ui/button';
 import { OverlayControls } from './OverlayControls';
 import { BackgroundTextureControls } from './BackgroundTextureControls';
+import { MeshControls } from './MeshControls';
 
 const ALIGN_GRID: ImageAlign[][] = [
   ['top-left', 'top-center', 'top-right'],
@@ -15,8 +16,9 @@ const ALIGN_GRID: ImageAlign[][] = [
 ];
 
 export function PropertiesPanel() {
+  const meshKey = meshKeyOf(useModelStore((s) => s.selectedMesh));
   const selectedAnnotationId = useAnnotationStore((state) => state.selectedAnnotationId);
-  const annotations = useAnnotationStore((state) => state.annotations);
+  const annotations = useAnnotationStore((state) => state.annotationsByMesh[meshKey] ?? EMPTY_ANNOTATIONS);
   const updateAnnotation = useAnnotationStore((state) => state.updateAnnotation);
 
   const selectedAnnotation = annotations.find((a) => a.id === selectedAnnotationId);
@@ -66,6 +68,7 @@ export function PropertiesPanel() {
 
   return (
     <div className="h-full bg-muted/30 border-l overflow-auto">
+      <MeshControls />
       {selectedAnnotation ? (
         <>
           {/* Transform Section */}

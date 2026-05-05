@@ -2,11 +2,11 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Stage, Layer, Rect, Image as KonvaImage, Transformer } from 'react-konva';
 import Konva from 'konva';
 import { Plus, Minus, Maximize2 } from 'lucide-react';
-import { useAnnotationStore, useModelStore, useOverlayStore } from '../store/combinedStores';
+import { useAnnotationStore, useModelStore, useOverlayStore, meshKeyOf, EMPTY_ANNOTATIONS } from '../store/combinedStores';
 import { useCanvasStore } from '../store/combinedStores';
 import type { Annotation } from '../types';
 import { ANNOTATION_COLORS } from '../types';
-import { AnnotationBox, renderAnnotationsToCanvas, renderOverlaysToCanvas, subscribeAnnotationImages } from '../services/annotationRenderer';
+import { AnnotationBox, renderAnnotationBasesToCanvas, renderAnnotationDecalsToCanvas, renderOverlaysToCanvas, subscribeAnnotationImages } from '../services/annotationRenderer';
 import { generateUVLayout } from '../utils/uvGenerator';
 import { Button } from './ui/button';
 
@@ -14,21 +14,34 @@ import { Button } from './ui/button';
 
 
 export function AnnotationEditor() {
-  const uvCanvas = useCanvasStore((state) => state.uvCanvas);
-  const uvTexture = useCanvasStore((state) => state.uvTexture);
+  const selectedMesh = useModelStore((state) => state.selectedMesh);
+  const meshKey = meshKeyOf(selectedMesh);
+
   const canvasSize = useCanvasStore((state) => state.canvasSize);
-  const backgroundImage = useCanvasStore((state) => state.backgroundImage);
   const showWireframe = useCanvasStore((state) => state.showWireframe);
-  const annotations = useAnnotationStore((state) => state.annotations);
+  const uvCanvas = useCanvasStore((state) => state.canvasByMesh[meshKey] ?? null);
+  const uvTexture = useCanvasStore((state) => state.textureByMesh[meshKey] ?? null);
+  const backgroundImage = useCanvasStore((state) => state.backgroundImagesByMesh[meshKey] ?? null);
+  const baseOpacity = useCanvasStore((state) => state.baseOpacityByMesh[meshKey] ?? 1);
+  const setMeshCanvas = useCanvasStore((state) => state.setMeshCanvas);
+
+  const annotations = useAnnotationStore((state) => state.annotationsByMesh[meshKey] ?? EMPTY_ANNOTATIONS);
   const selectedAnnotationId = useAnnotationStore((state) => state.selectedAnnotationId);
   const updateAnnotation = useAnnotationStore((state) => state.updateAnnotation);
   const setSelectedAnnotationId = useAnnotationStore((state) => state.setSelectedAnnotationId);
   const addAnnotation = useAnnotationStore((state) => state.addAnnotation);
   const setPendingLabelEdit = useAnnotationStore((state) => state.setPendingLabelEdit);
-  const selectedMesh = useModelStore((state) => state.selectedMesh);
 
   const overlays = useOverlayStore((state) => state.overlays);
   const updateOverlay = useOverlayStore((state) => state.updateOverlay);
+
+  // Auto-create per-mesh canvas + texture when a mesh is selected and none exists yet.
+  useEffect(() => {
+    if (!selectedMesh) return;
+    if (uvCanvas && uvTexture) return;
+    const { canvas, texture } = generateUVLayout(selectedMesh, canvasSize);
+    setMeshCanvas(meshKey, canvas, texture);
+  }, [selectedMesh, meshKey, canvasSize, uvCanvas, uvTexture, setMeshCanvas]);
 
   const [image, setImage] = useState<HTMLImageElement | null>(null);
   const stageRef = useRef<Konva.Stage>(null);
@@ -49,8 +62,28 @@ export function AnnotationEditor() {
   const [stagePosition, setStagePosition] = useState({ x: 0, y: 0 });
   const [isPanning, setIsPanning] = useState(false);
   const [panStart, setPanStart] = useState<{ x: number; y: number } | null>(null);
+  const [isSpaceHeld, setIsSpaceHeld] = useState(false);
   const minScale = 0.1;
   const maxScale = 10;
+
+  // Hold space to pan (Figma/Photoshop convention)
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.code !== 'Space') return;
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      e.preventDefault();
+      setIsSpaceHeld(true);
+    };
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (e.code === 'Space') setIsSpaceHeld(false);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    window.addEventListener('keyup', onKeyUp);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('keyup', onKeyUp);
+    };
+  }, []);
 
   // Cache wireframe canvas -- only regenerate when mesh or canvasSize changes
   const wireframeCanvas = useMemo(() => {
@@ -92,27 +125,34 @@ export function AnnotationEditor() {
     const ctx = uvCanvas.getContext('2d');
     if (!ctx) return;
 
-    ctx.clearRect(0, 0, uvCanvas.width, uvCanvas.height);
+    // Phase 1: composite "base" layers (background + wireframe + overlays + annotation
+    // colored fills/labels) into a temp canvas at full alpha. These are the layers that
+    // dim with the mesh-opacity slider.
+    const baseCanvas = document.createElement('canvas');
+    baseCanvas.width = uvCanvas.width;
+    baseCanvas.height = uvCanvas.height;
+    const bctx = baseCanvas.getContext('2d');
+    if (!bctx) return;
 
-    // 1. Draw background texture (cover-fits the canvas)
     if (backgroundImage && backgroundImage.complete && backgroundImage.naturalWidth > 0) {
-      ctx.drawImage(backgroundImage, 0, 0, uvCanvas.width, uvCanvas.height);
+      bctx.drawImage(backgroundImage, 0, 0, baseCanvas.width, baseCanvas.height);
     }
-
-    // 2. Draw wireframe on top (toggleable)
     if (showWireframe) {
-      ctx.drawImage(wireframeCanvas, 0, 0);
+      bctx.drawImage(wireframeCanvas, 0, 0);
     }
+    renderOverlaysToCanvas(bctx, overlays);
+    renderAnnotationBasesToCanvas(bctx, annotations);
 
-    // 3. Draw visible overlays
-    renderOverlaysToCanvas(ctx, overlays);
+    // Phase 2: clear main canvas, blit base at the user's chosen opacity, then
+    // draw in-box decal images on top at full alpha so they stay opaque.
+    ctx.clearRect(0, 0, uvCanvas.width, uvCanvas.height);
+    ctx.globalAlpha = baseOpacity;
+    ctx.drawImage(baseCanvas, 0, 0);
+    ctx.globalAlpha = 1;
+    renderAnnotationDecalsToCanvas(ctx, annotations);
 
-    // 4. Draw annotations on top
-    renderAnnotationsToCanvas(ctx, useAnnotationStore.getState().annotations);
-
-    // 5. Force texture update on 3D model
     uvTexture.needsUpdate = true;
-  }, [annotations, overlays, uvTexture, uvCanvas, wireframeCanvas, backgroundImage, showWireframe, annImageTick]);
+  }, [annotations, overlays, uvTexture, uvCanvas, wireframeCanvas, backgroundImage, showWireframe, baseOpacity, annImageTick]);
 
   // Measure container size and handle resize
   useEffect(() => {
@@ -153,10 +193,10 @@ export function AnnotationEditor() {
     const pointer = stage.getPointerPosition();
     if (!pointer) return;
 
-    // Middle-click or right-click = pan, left-click = draw
+    // Middle-click, right-click, or space-held left-click = pan; otherwise draw
     const isMiddleOrRight = e.evt.button === 1 || e.evt.button === 2;
 
-    if (isMiddleOrRight) {
+    if (isMiddleOrRight || isSpaceHeld) {
       setIsPanning(true);
       setPanStart(pointer);
     } else {
@@ -257,15 +297,26 @@ export function AnnotationEditor() {
     const pointer = stage.getPointerPosition();
     if (!pointer) return;
 
+    // Ctrl/Cmd+wheel (or trackpad pinch — fires with ctrlKey=true) = zoom.
+    // Bare wheel / two-finger trackpad drag = pan.
+    const isZoom = e.evt.ctrlKey || e.evt.metaKey;
+
+    if (!isZoom) {
+      setStagePosition({
+        x: stagePosition.x - e.evt.deltaX,
+        y: stagePosition.y - e.evt.deltaY,
+      });
+      return;
+    }
+
     const scaleBy = 1.1;
-    const oldScale = stageScale; // Use state scale, not stage.scaleX()
-    const newScale = e.evt.deltaY > 0 
-      ? Math.max(minScale, oldScale / scaleBy) 
+    const oldScale = stageScale;
+    const newScale = e.evt.deltaY > 0
+      ? Math.max(minScale, oldScale / scaleBy)
       : Math.min(maxScale, oldScale * scaleBy);
 
     setStageScale(newScale);
 
-    // Zoom to pointer position
     const mousePointTo = {
       x: (pointer.x - stagePosition.x) / (oldScale * scale),
       y: (pointer.y - stagePosition.y) / (oldScale * scale),
@@ -314,7 +365,13 @@ export function AnnotationEditor() {
   const stageHeight = baseSize;
 
   return (
-    <div ref={containerRef} className="w-full h-full flex items-center justify-center bg-muted overflow-hidden relative" onContextMenu={(e) => e.preventDefault()}>
+    <div
+      ref={containerRef}
+      className={`w-full h-full flex items-center justify-center bg-muted overflow-hidden relative ${
+        isPanning ? 'cursor-grabbing' : isSpaceHeld ? 'cursor-grab' : ''
+      }`}
+      onContextMenu={(e) => e.preventDefault()}
+    >
       {/* Zoom controls */}
       <div className="absolute top-4 right-4 z-10 flex flex-col gap-2 bg-background/90 backdrop-blur-sm p-2 rounded-lg border shadow-lg">
         <Button 

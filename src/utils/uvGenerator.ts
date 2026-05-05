@@ -1,5 +1,42 @@
 import * as THREE from 'three';
 
+/**
+ * Compute the tight bounding box of a mesh's UV island, in canvas pixel space.
+ * Returns null if the mesh has no UVs. Box uses the same V-axis convention as
+ * the rest of the app (no flip), so it lines up with the rendered wireframe.
+ */
+export function computeUVBoundingBox(
+  mesh: THREE.Mesh,
+  canvasSize: number
+): { x: number; y: number; width: number; height: number } | null {
+  const uvAttr = mesh.geometry.attributes.uv as THREE.BufferAttribute | undefined;
+  if (!uvAttr || uvAttr.count === 0) return null;
+
+  let minU = Infinity, minV = Infinity, maxU = -Infinity, maxV = -Infinity;
+  for (let i = 0; i < uvAttr.count; i++) {
+    const u = uvAttr.getX(i);
+    const v = uvAttr.getY(i);
+    if (u < minU) minU = u;
+    if (u > maxU) maxU = u;
+    if (v < minV) minV = v;
+    if (v > maxV) maxV = v;
+  }
+  if (!isFinite(minU)) return null;
+
+  // Clamp to [0,1] for UVs that overshoot the canonical square
+  minU = Math.max(0, Math.min(1, minU));
+  maxU = Math.max(0, Math.min(1, maxU));
+  minV = Math.max(0, Math.min(1, minV));
+  maxV = Math.max(0, Math.min(1, maxV));
+
+  return {
+    x: minU * canvasSize,
+    y: minV * canvasSize,
+    width: (maxU - minU) * canvasSize,
+    height: (maxV - minV) * canvasSize,
+  };
+}
+
 export function generateUVLayout(mesh: THREE.Mesh, canvasSize: number = 1024): { canvas: HTMLCanvasElement; texture: THREE.CanvasTexture } {
   const canvas = document.createElement('canvas');
   canvas.width = canvasSize;

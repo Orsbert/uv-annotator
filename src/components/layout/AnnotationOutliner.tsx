@@ -1,11 +1,15 @@
 import { useState } from 'react';
-import { ChevronDown, ChevronRight, Eye, EyeOff, Plus, Copy, Trash2, Unlock } from 'lucide-react';
-import { useAnnotationStore } from '../../store/combinedStores';
+import { ChevronDown, ChevronRight, Eye, EyeOff, Plus, Copy, Trash2, Unlock, Wand2 } from 'lucide-react';
+import { useAnnotationStore, useModelStore, useCanvasStore, meshKeyOf, EMPTY_ANNOTATIONS } from '../../store/combinedStores';
 import { ANNOTATION_COLORS } from '../../types';
 import { Button } from '../ui/button';
+import { computeUVBoundingBox } from '../../utils/uvGenerator';
 
 export function AnnotationOutliner() {
-  const annotations = useAnnotationStore((state) => state.annotations);
+  const selectedMesh = useModelStore((s) => s.selectedMesh);
+  const meshKey = meshKeyOf(selectedMesh);
+  const canvasSize = useCanvasStore((s) => s.canvasSize);
+  const annotations = useAnnotationStore((state) => state.annotationsByMesh[meshKey] ?? EMPTY_ANNOTATIONS);
   const selectedAnnotationId = useAnnotationStore((state) => state.selectedAnnotationId);
   const setSelectedAnnotationId = useAnnotationStore((state) => state.setSelectedAnnotationId);
   const deleteAnnotation = useAnnotationStore((state) => state.deleteAnnotation);
@@ -41,6 +45,29 @@ export function AnnotationOutliner() {
       y: 100 + Math.random() * 200,
       width: 200,
       height: 150,
+      rotation: 0,
+      label: `b${existingBoxCount + 1}`,
+      color: ANNOTATION_COLORS[annotations.length % ANNOTATION_COLORS.length].name,
+      visible: true,
+    };
+    addAnnotation(newAnnotation);
+    setPendingLabelEdit(newAnnotation.id);
+  };
+
+  const handleAutoFit = () => {
+    if (!selectedMesh) return;
+    const box = computeUVBoundingBox(selectedMesh, canvasSize);
+    if (!box) {
+      alert('No UV data on this mesh');
+      return;
+    }
+    const existingBoxCount = annotations.filter((a) => a.label.match(/^b\d+$/)).length;
+    const newAnnotation = {
+      id: `ann-${Date.now()}`,
+      x: box.x,
+      y: box.y,
+      width: box.width,
+      height: box.height,
       rotation: 0,
       label: `b${existingBoxCount + 1}`,
       color: ANNOTATION_COLORS[annotations.length % ANNOTATION_COLORS.length].name,
@@ -105,8 +132,18 @@ export function AnnotationOutliner() {
 
           {/* Actions */}
           <div className="p-2 border-t flex gap-1">
-            <Button size="sm" variant="ghost" className="h-7 px-2" onClick={handleAdd}>
+            <Button size="sm" variant="ghost" className="h-7 px-2" onClick={handleAdd} title="Add annotation">
               <Plus className="h-4 w-4" />
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-7 px-2"
+              disabled={!selectedMesh}
+              onClick={handleAutoFit}
+              title="Auto-fit box to UV island"
+            >
+              <Wand2 className="h-4 w-4" />
             </Button>
             <Button
               size="sm"
@@ -114,6 +151,7 @@ export function AnnotationOutliner() {
               className="h-7 px-2"
               disabled={!selectedAnnotationId}
               onClick={() => selectedAnnotationId && handleDuplicate(selectedAnnotationId)}
+              title="Duplicate"
             >
               <Copy className="h-4 w-4" />
             </Button>
@@ -123,6 +161,7 @@ export function AnnotationOutliner() {
               className="h-7 px-2"
               disabled={!selectedAnnotationId}
               onClick={() => selectedAnnotationId && deleteAnnotation(selectedAnnotationId)}
+              title="Delete"
             >
               <Trash2 className="h-4 w-4" />
             </Button>

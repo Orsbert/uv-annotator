@@ -335,6 +335,87 @@ export function renderAnnotationsToCanvas(ctx: CanvasRenderingContext2D, annotat
 }
 
 /**
+ * Draw the "base" portion of an annotation: colored fill + border + label.
+ * Skips the in-box decal image (drawn separately via renderAnnotationDecalToCanvas).
+ */
+export function renderAnnotationBaseToCanvas(ctx: CanvasRenderingContext2D, ann: Annotation) {
+  if (ann.visible === false) return;
+  const { x, y, width, height, rotation, label, color, imageData } = ann;
+  const colorTheme = getColorTheme(color);
+  const hasImage = !!imageData;
+
+  ctx.save();
+  ctx.translate(x + width / 2, y + height / 2);
+  ctx.rotate((rotation * Math.PI) / 180);
+  ctx.translate(-(x + width / 2), -(y + height / 2));
+
+  ctx.fillStyle = colorTheme.light;
+  ctx.globalAlpha = hasImage ? 0.15 : 0.35;
+  ctx.fillRect(x, y, width, height);
+  ctx.globalAlpha = 1.0;
+
+  ctx.strokeStyle = colorTheme.main;
+  ctx.lineWidth = 1.5;
+  ctx.strokeRect(x, y, width, height);
+
+  const fontSize = 8;
+  const padding = 4;
+  ctx.fillStyle = '#000000';
+  ctx.font = `${fontSize}px Arial`;
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'top';
+  ctx.globalAlpha = 0.8;
+  ctx.fillText(label, x + padding - 1, y + padding + 1);
+  ctx.fillText(label, x + padding + 1, y + padding + 1);
+  ctx.fillText(label, x + padding - 1, y + padding - 1);
+  ctx.fillText(label, x + padding + 1, y + padding - 1);
+  ctx.globalAlpha = 1;
+  ctx.fillStyle = '#ffffff';
+  ctx.fillText(label, x + padding, y + padding);
+
+  ctx.restore();
+}
+
+export function renderAnnotationBasesToCanvas(ctx: CanvasRenderingContext2D, annotations: Annotation[]) {
+  annotations.forEach((ann) => renderAnnotationBaseToCanvas(ctx, ann));
+}
+
+/**
+ * Draw only the in-box decal image for an annotation. Used so decals render
+ * on top of the (optionally-dimmed) base composite at full alpha.
+ */
+export function renderAnnotationDecalToCanvas(ctx: CanvasRenderingContext2D, ann: Annotation) {
+  if (ann.visible === false) return;
+  const { x, y, width, height, rotation, imageData, imageFit, imageAlign, imageOpacity } = ann;
+  if (!imageData) return;
+  const annImage = getAnnotationImage(imageData);
+  if (!annImage) return;
+
+  ctx.save();
+  ctx.translate(x + width / 2, y + height / 2);
+  ctx.rotate((rotation * Math.PI) / 180);
+  ctx.translate(-(x + width / 2), -(y + height / 2));
+
+  const r = computeImageRect(
+    { x, y, width, height },
+    annImage.naturalWidth,
+    annImage.naturalHeight,
+    imageFit ?? 'contain',
+    imageAlign ?? 'center'
+  );
+  ctx.beginPath();
+  ctx.rect(x, y, width, height);
+  ctx.clip();
+  ctx.globalAlpha = imageOpacity ?? 1;
+  ctx.drawImage(annImage, r.sx, r.sy, r.sw, r.sh, r.dx, r.dy, r.dw, r.dh);
+  ctx.restore();
+}
+
+export function renderAnnotationDecalsToCanvas(ctx: CanvasRenderingContext2D, annotations: Annotation[]) {
+  annotations.forEach((ann) => renderAnnotationDecalToCanvas(ctx, ann));
+}
+
+/**
  * Draw all visible overlays onto a 2D canvas context.
  * Renders each overlay at its stored position, scale, and opacity.
  */

@@ -1,12 +1,14 @@
 import { useState } from 'react';
 import { ChevronDown, ChevronRight, ImagePlus, Trash2 } from 'lucide-react';
-import { useCanvasStore } from '../../store/combinedStores';
+import { useCanvasStore, useModelStore, meshKeyOf } from '../../store/combinedStores';
 import { Button } from '../ui/button';
 import { Label } from '../ui/label';
 
 export function BackgroundTextureControls() {
-  const backgroundImageData = useCanvasStore((s) => s.backgroundImageData);
-  const backgroundImageName = useCanvasStore((s) => s.backgroundImageName);
+  const meshKey = meshKeyOf(useModelStore((s) => s.selectedMesh));
+  const bg = useCanvasStore((s) => s.backgroundsByMesh[meshKey]);
+  const backgroundImageData = bg?.imageData ?? null;
+  const backgroundImageName = bg?.imageName ?? null;
   const showWireframe = useCanvasStore((s) => s.showWireframe);
   const setBackgroundImage = useCanvasStore((s) => s.setBackgroundImage);
   const clearBackgroundImage = useCanvasStore((s) => s.clearBackgroundImage);
@@ -60,7 +62,7 @@ export function BackgroundTextureControls() {
                 size="sm"
                 variant="ghost"
                 className="text-destructive hover:text-destructive"
-                onClick={clearBackgroundImage}
+                onClick={() => clearBackgroundImage()}
                 title="Remove background texture"
               >
                 <Trash2 className="h-3 w-3" />

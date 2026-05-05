@@ -1,5 +1,5 @@
 import { Plus, Trash2, Copy } from 'lucide-react';
-import { useAnnotationStore } from '../store/combinedStores';
+import { useAnnotationStore, useModelStore, meshKeyOf, EMPTY_ANNOTATIONS } from '../store/combinedStores';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
@@ -10,7 +10,8 @@ import { ANNOTATION_COLORS } from '../types';
 import { useState, useEffect } from 'react';
 
 export function AnnotationControls() {
-  const annotations = useAnnotationStore((state) => state.annotations);
+  const meshKey = meshKeyOf(useModelStore((s) => s.selectedMesh));
+  const annotations = useAnnotationStore((state) => state.annotationsByMesh[meshKey] ?? EMPTY_ANNOTATIONS);
   const selectedAnnotationId = useAnnotationStore((state) => state.selectedAnnotationId);
   const pendingLabelEdit = useAnnotationStore((state) => state.pendingLabelEdit);
   const addAnnotation = useAnnotationStore((state) => state.addAnnotation);

@@ -1,7 +1,8 @@
 import { useRef, useState, useEffect } from 'react';
 import { Canvas, ThreeEvent, useThree } from '@react-three/fiber';
-import { OrbitControls, Grid, Environment } from '@react-three/drei';
-import { useModelStore } from '../store/combinedStores';
+import { OrbitControls, Grid, Environment, TransformControls } from '@react-three/drei';
+import { useModelStore, meshKeyOf, useUiStore } from '../store/combinedStores';
+import type { AxisLock } from '../store/combinedStores';
 import { useCanvasStore } from '../store/combinedStores';
 import { usePaintStore } from '../store/combinedStores';
 import { useSessionStore } from '../store/useSessionStore';
@@ -15,6 +16,7 @@ function CameraController() {
   const updateSession = useSessionStore((state) => state.updateSession);
   const sessions = useSessionStore((state) => state.sessions);
   const isPaintMode = usePaintStore((state) => state.isPaintMode);
+  const surfaceDragActive = useUiStore((state) => state.surfaceDragActive);
 
   // Restore camera state on mount or session change
   useEffect(() => {
@@ -41,10 +43,10 @@ function CameraController() {
   };
 
   return (
-    <OrbitControls 
+    <OrbitControls
       ref={controlsRef}
-      makeDefault 
-      enabled={!isPaintMode}
+      makeDefault
+      enabled={!isPaintMode && !surfaceDragActive}
       onEnd={handleEnd}
       enableDamping={true}
       dampingFactor={0.05}
@@ -56,20 +58,93 @@ function Scene() {
   const model = useModelStore((state) => state.model);
   const selectedMesh = useModelStore((state) => state.selectedMesh);
   const setSelectedMesh = useModelStore((state) => state.setSelectedMesh);
-  const uvTexture = useCanvasStore((state) => state.uvTexture);
+  const setMeshTransform = useModelStore((state) => state.setMeshTransform);
+  const meshes = useModelStore((state) => state.meshes);
+  const meshKey = meshKeyOf(selectedMesh);
+  const uvTexture = useCanvasStore((state) => state.textureByMesh[meshKey] ?? null);
+  const baseOpacity = useCanvasStore((state) => state.baseOpacityByMesh[meshKey] ?? 1);
   const isPaintMode = usePaintStore((state) => state.isPaintMode);
   const addPaintedUVCoord = usePaintStore((state) => state.addPaintedUVCoord);
   const brushSize = usePaintStore((state) => state.brushSize);
-  
+  const surfaceDragMode = useUiStore((state) => state.surfaceDragMode);
+  const setSurfaceDragActive = useUiStore((state) => state.setSurfaceDragActive);
+  const axisLock = useUiStore((state) => state.axisLock);
+  const [gizmoMode, setGizmoMode] = useState<'translate' | 'rotate' | 'scale'>('translate');
+  const { camera, gl } = useThree();
+  const surfaceDragRef = useRef<{ offset: THREE.Vector3 } | null>(null);
+  const surfaceRaycaster = useRef(new THREE.Raycaster());
+
+  // Keyboard shortcuts: Blender-style transform conventions.
+  //   G / R / S   → translate / rotate / scale gizmo mode
+  //   X / Y / Z   → constrain gizmo to one axis (toggle off by pressing same key)
+  //   Shift+X/Y/Z → "all but" plane lock (hide that axis)
+  //   Escape      → clear axis lock if set (otherwise falls through to the global handler)
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      if (e.ctrlKey || e.metaKey) return;
+
+      const k = e.key.toLowerCase();
+      // Mode switch — never with modifiers (Shift+S etc. is reserved for axis-plane lock)
+      if (!e.shiftKey && !e.altKey) {
+        if (k === 'g') { setGizmoMode('translate'); return; }
+        if (k === 'r') { setGizmoMode('rotate'); return; }
+        if (k === 's') { setGizmoMode('scale'); return; }
+      }
+      if (k === 'x' || k === 'y' || k === 'z') {
+        const axis = k as 'x' | 'y' | 'z';
+        const desired: AxisLock = e.shiftKey ? (`no-${axis}` as AxisLock) : axis;
+        const current = useUiStore.getState().axisLock;
+        useUiStore.getState().setAxisLock(current === desired ? null : desired);
+        return;
+      }
+      if (e.key === 'Escape' && useUiStore.getState().axisLock !== null) {
+        useUiStore.getState().setAxisLock(null);
+        e.preventDefault();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
+  const showX = axisLock === null || axisLock === 'x' || axisLock === 'no-y' || axisLock === 'no-z';
+  const showY = axisLock === null || axisLock === 'y' || axisLock === 'no-x' || axisLock === 'no-z';
+  const showZ = axisLock === null || axisLock === 'z' || axisLock === 'no-x' || axisLock === 'no-y';
+
+  // Persist the gizmo's drag result back to the store on mouse-up.
+  const commitGizmoTransform = () => {
+    if (!selectedMesh) return;
+    setMeshTransform(meshKeyOf(selectedMesh), {
+      position: [selectedMesh.position.x, selectedMesh.position.y, selectedMesh.position.z],
+      rotation: [selectedMesh.rotation.x, selectedMesh.rotation.y, selectedMesh.rotation.z],
+      scale: [selectedMesh.scale.x, selectedMesh.scale.y, selectedMesh.scale.z],
+    });
+  };
+
   const [paintIndicator, setPaintIndicator] = useState<{ position: THREE.Vector3; normal: THREE.Vector3 } | null>(null);
   const isPaintingRef = useRef(false);
 
-  // Apply texture to selected mesh
+  // Apply texture to selected mesh — clone the material first if it hasn't been
+  // cloned yet, so we don't mutate a material that's shared across meshes.
   if (selectedMesh && uvTexture && selectedMesh.material) {
+    if (!selectedMesh.userData.uvCloned) {
+      selectedMesh.material = (selectedMesh.material as THREE.MeshStandardMaterial).clone();
+      selectedMesh.userData.uvCloned = true;
+    }
     const material = selectedMesh.material as THREE.MeshStandardMaterial;
     if (material.map !== uvTexture) {
       material.map = uvTexture;
       material.needsUpdate = true;
+    }
+    // Per-pixel transparency comes from the texture's alpha channel; opacity stays at 1.
+    const wantTransparent = baseOpacity < 1;
+    if (material.transparent !== wantTransparent) {
+      material.transparent = wantTransparent;
+      material.depthWrite = !wantTransparent;
+      material.needsUpdate = true;
+    }
+    if (material.opacity !== 1) {
+      material.opacity = 1;
     }
   }
 
@@ -78,7 +153,96 @@ function Scene() {
       e.stopPropagation();
       isPaintingRef.current = true;
       handlePaint(e);
+      return;
     }
+    if (surfaceDragMode && e.object === selectedMesh && e.button === 0) {
+      e.stopPropagation();
+      startSurfaceDrag(e);
+    }
+  };
+
+  const screenToNdc = (clientX: number, clientY: number): THREE.Vector2 => {
+    const rect = gl.domElement.getBoundingClientRect();
+    return new THREE.Vector2(
+      ((clientX - rect.left) / rect.width) * 2 - 1,
+      -((clientY - rect.top) / rect.height) * 2 + 1
+    );
+  };
+
+  const raycastSurface = (clientX: number, clientY: number): THREE.Intersection | null => {
+    if (!selectedMesh) return null;
+    const ndc = screenToNdc(clientX, clientY);
+    surfaceRaycaster.current.setFromCamera(ndc, camera);
+    const targets = meshes.filter((m) => m !== selectedMesh && m.visible);
+    const hits = surfaceRaycaster.current.intersectObjects(targets, false);
+    return hits[0] ?? null;
+  };
+
+  const startSurfaceDrag = (e: ThreeEvent<PointerEvent>) => {
+    if (!selectedMesh) return;
+    setSurfaceDragActive(true);
+
+    // Anchor: prefer a hit on a non-self surface. If the drag begins over empty
+    // space (decal floats with no surface beneath it), fall back to the click
+    // point on the dragged mesh so the offset is still meaningful.
+    const surfaceHit = raycastSurface(e.nativeEvent.clientX, e.nativeEvent.clientY);
+    const anchor = surfaceHit ? surfaceHit.point : e.point.clone();
+    const offset = new THREE.Vector3().copy(selectedMesh.position).sub(anchor);
+    surfaceDragRef.current = { offset };
+
+    const onMove = (mv: PointerEvent) => {
+      if (!surfaceDragRef.current || !selectedMesh) return;
+      const hit = raycastSurface(mv.clientX, mv.clientY);
+      if (!hit) return; // off-surface — hold position rather than snap to camera plane
+      selectedMesh.position.copy(hit.point).add(surfaceDragRef.current.offset);
+    };
+
+    // Scroll wheel during drag = uniform scale. Blender convention:
+    //   plain  → multiply by 1.05 per tick
+    //   Shift  → precise (×1.005)
+    //   Ctrl   → snap, ±0.1 increments
+    // Trackpad pinch fires wheel with ctrlKey=true, which means pinch-to-zoom
+    // ends up in the snap branch — that's the closest analog to Blender's
+    // pinch-style scaling and feels right in practice.
+    const onWheel = (we: WheelEvent) => {
+      if (!surfaceDragRef.current || !selectedMesh) return;
+      we.preventDefault();
+      const dir = we.deltaY > 0 ? -1 : 1;
+      if (we.ctrlKey || we.metaKey) {
+        // Snap to nearest 0.1 step on each axis
+        const step = 0.1;
+        const next = (v: number) =>
+          Math.max(0.01, Math.round((v + dir * step) / step) * step);
+        selectedMesh.scale.set(
+          next(selectedMesh.scale.x),
+          next(selectedMesh.scale.y),
+          next(selectedMesh.scale.z),
+        );
+      } else {
+        const stepFactor = we.shiftKey ? 1.005 : 1.05;
+        const factor = dir > 0 ? stepFactor : 1 / stepFactor;
+        selectedMesh.scale.multiplyScalar(factor);
+      }
+    };
+
+    const onUp = () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('wheel', onWheel);
+      surfaceDragRef.current = null;
+      setSurfaceDragActive(false);
+      if (!selectedMesh) return;
+      // Commit position AND scale to the store as one undo entry
+      setMeshTransform(meshKeyOf(selectedMesh), {
+        position: [selectedMesh.position.x, selectedMesh.position.y, selectedMesh.position.z],
+        scale: [selectedMesh.scale.x, selectedMesh.scale.y, selectedMesh.scale.z],
+      });
+    };
+
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    // passive:false so we can preventDefault and stop the canvas from dollying
+    window.addEventListener('wheel', onWheel, { passive: false });
   };
 
   const handlePointerMove = (e: ThreeEvent<PointerEvent>) => {
@@ -189,18 +353,43 @@ function Scene() {
         fadeDistance={30} 
       />
       
+      {selectedMesh && !isPaintMode && !surfaceDragMode && (
+        <TransformControls
+          object={selectedMesh}
+          mode={gizmoMode}
+          showX={showX}
+          showY={showY}
+          showZ={showZ}
+          onMouseUp={commitGizmoTransform}
+        />
+      )}
+
       <CameraController />
       <Environment preset="studio" />
     </>
   );
 }
 
+function AxisLockBadge() {
+  const axisLock = useUiStore((s) => s.axisLock);
+  if (!axisLock) return null;
+  const label = axisLock.startsWith('no-')
+    ? `Lock: not ${axisLock.slice(3).toUpperCase()}`
+    : `Lock: ${axisLock.toUpperCase()} only`;
+  return (
+    <div className="absolute top-2 left-2 z-10 px-2 py-1 rounded bg-background/80 border text-xs font-mono pointer-events-none">
+      🔒 {label}
+    </div>
+  );
+}
+
 export function ModelViewer() {
   return (
-    <div className="w-full h-full">
+    <div className="w-full h-full relative">
       <Canvas camera={{ position: [3, 3, 3], fov: 50 }}>
         <Scene />
       </Canvas>
+      <AxisLockBadge />
     </div>
   );
 }
