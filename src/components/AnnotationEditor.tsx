@@ -422,7 +422,11 @@ export function AnnotationEditor() {
           <Layer>
             {image && <KonvaImage image={image} />}
 
-            {overlays.filter((o) => o.visible && o.image).map((o) => (
+            {overlays.filter((o) => o.visible && o.image).map((o) => {
+              // Offset to the image center so rotation pivots in place; x/y stay top-left.
+              const imgW = o.image!.naturalWidth;
+              const imgH = o.image!.naturalHeight;
+              return (
               <KonvaImage
                 key={o.id}
                 ref={(node) => {
@@ -430,23 +434,37 @@ export function AnnotationEditor() {
                   else overlayRefs.current.delete(o.id);
                 }}
                 image={o.image!}
-                x={o.x}
-                y={o.y}
+                x={o.x + (imgW * o.scaleX) / 2}
+                y={o.y + (imgH * o.scaleY) / 2}
+                offsetX={imgW / 2}
+                offsetY={imgH / 2}
                 scaleX={o.scaleX}
                 scaleY={o.scaleY}
+                rotation={o.rotation}
                 opacity={o.opacity}
                 draggable={o.editMode}
                 listening={o.editMode}
                 onDragEnd={(e) => {
-                  updateOverlay(o.id, { x: e.target.x(), y: e.target.y() });
+                  const node = e.target;
+                  updateOverlay(o.id, {
+                    x: node.x() - (imgW * node.scaleX()) / 2,
+                    y: node.y() - (imgH * node.scaleY()) / 2,
+                  });
                 }}
                 onTransformEnd={() => {
                   const node = overlayRefs.current.get(o.id);
                   if (!node) return;
-                  updateOverlay(o.id, { x: node.x(), y: node.y(), scaleX: node.scaleX(), scaleY: node.scaleY() });
+                  updateOverlay(o.id, {
+                    x: node.x() - (imgW * node.scaleX()) / 2,
+                    y: node.y() - (imgH * node.scaleY()) / 2,
+                    scaleX: node.scaleX(),
+                    scaleY: node.scaleY(),
+                    rotation: node.rotation(),
+                  });
                 }}
               />
-            ))}
+              );
+            })}
             {editingOverlay && (
               <Transformer
                 ref={overlayTransformerRef}

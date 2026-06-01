@@ -106,7 +106,7 @@ export const loadSession = async (sessionId: string) => {
   // Restore Overlays
   if (overlayData && overlayData.overlays && overlayData.overlays.length > 0) {
     useOverlayStore.setState({
-      overlays: overlayData.overlays.map((o: any) => ({ ...o, image: null })),
+      overlays: overlayData.overlays.map((o: any) => ({ ...o, rotation: o.rotation ?? 0, image: null })),
       selectedOverlayId: null,
     });
     await useOverlayStore.getState().restoreOverlays();

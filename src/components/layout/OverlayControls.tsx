@@ -170,6 +170,21 @@ function OverlayItemControls({ overlay }: { overlay: OverlayItem }) {
               </div>
             </div>
           </div>
+
+          {/* Rotation */}
+          <div>
+            <Label className="text-xs text-muted-foreground mb-1 block">Rotation</Label>
+            <div className="flex items-center gap-1">
+              <Input
+                type="number"
+                step="1"
+                value={(overlay.rotation ?? 0).toFixed(0)}
+                onChange={(e) => updateOverlay(overlay.id, { rotation: parseFloat(e.target.value) || 0 })}
+                className="h-7 text-xs"
+              />
+              <span className="text-xs w-4">°</span>
+            </div>
+          </div>
         </div>
       )}
     </div>

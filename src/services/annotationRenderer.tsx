@@ -428,20 +428,20 @@ export function renderOverlaysToCanvas(
     y: number;
     scaleX: number;
     scaleY: number;
+    rotation: number;
     opacity: number;
   }>
 ) {
   for (const overlay of overlays) {
     if (!overlay.visible || !overlay.image) continue;
+    const w = overlay.image.naturalWidth * overlay.scaleX;
+    const h = overlay.image.naturalHeight * overlay.scaleY;
     ctx.save();
     ctx.globalAlpha = overlay.opacity;
-    ctx.drawImage(
-      overlay.image,
-      overlay.x,
-      overlay.y,
-      overlay.image.naturalWidth * overlay.scaleX,
-      overlay.image.naturalHeight * overlay.scaleY
-    );
+    // Rotate around the image center so a typed angle spins it in place.
+    ctx.translate(overlay.x + w / 2, overlay.y + h / 2);
+    ctx.rotate(((overlay.rotation ?? 0) * Math.PI) / 180);
+    ctx.drawImage(overlay.image, -w / 2, -h / 2, w, h);
     ctx.restore();
   }
 }

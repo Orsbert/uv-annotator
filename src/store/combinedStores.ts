@@ -551,6 +551,7 @@ export interface OverlayItem {
   y: number;
   scaleX: number;
   scaleY: number;
+  rotation: number;
   lockAspect: boolean;
   editMode: boolean;
   image: HTMLImageElement | null; // runtime only
@@ -590,6 +591,7 @@ export const useOverlayStore = create<OverlayState>()(
               y: 0,
               scaleX: 1,
               scaleY: 1,
+              rotation: 0,
               lockAspect: true,
               editMode: false,
               image: img,
@@ -636,7 +638,7 @@ export const useOverlayStore = create<OverlayState>()(
             const img = new window.Image();
             img.src = o.imageData;
             await new Promise((resolve) => { img.onload = resolve; });
-            return { ...o, image: img };
+            return { ...o, rotation: o.rotation ?? 0, image: img };
           })
         );
         set({ overlays: restored });
