@@ -806,8 +806,3 @@ export const usePaintStore = create<PaintState>()(
   )
 );
 
-
-// TEMP DEBUG (remove): expose stores for live inspection
-if (typeof window !== 'undefined') {
-  (window as any).__stores = { model: useModelStore, canvas: useCanvasStore, annotation: useAnnotationStore, overlay: useOverlayStore };
-}
