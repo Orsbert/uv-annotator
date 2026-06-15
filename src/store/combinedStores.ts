@@ -20,7 +20,7 @@ function debounce<T extends (...args: any[]) => void>(fn: T, ms: number): T {
   }) as T;
 }
 
-type PersistedModelState = Pick<ModelState, 'modelBuffer' | 'modelName' | 'selectedMeshName' | 'transformsByMesh'>;
+type PersistedModelState = Pick<ModelState, 'modelBuffer' | 'modelName' | 'selectedMeshName' | 'transformsByMesh' | 'visibilityByMesh'>;
 
 export function meshKeyOf(mesh: { name: string; uuid: string } | null | undefined): string {
   if (!mesh) return '';
@@ -135,11 +135,14 @@ export interface ModelState {
   modelName: string | null;
   selectedMeshName: string | null;
   transformsByMesh: Record<string, MeshTransform>;
+  visibilityByMesh: Record<string, boolean>;
   setModel: (model: THREE.Group | null) => void;
   setMeshes: (meshes: THREE.Mesh[]) => void;
   setSelectedMesh: (mesh: THREE.Mesh | null) => void;
   setModelBuffer: (buffer: ArrayBuffer | null, name: string | null) => void;
   setMeshTransform: (meshKey: string, transform: Partial<MeshTransform>) => void;
+  // Merge per-mesh visibility flags (keyed by meshKey). Absent = visible.
+  setMeshVisibility: (updates: Record<string, boolean>) => void;
   loadModelFromBuffer: () => Promise<void>;
 }
 
@@ -154,6 +157,7 @@ export const useModelStore = create<ModelState>()(
       modelName: null,
       selectedMeshName: null,
       transformsByMesh: {},
+      visibilityByMesh: {},
       setModel: (model) => set({ model }),
       setMeshes: (meshes) => set({ meshes }),
       setSelectedMesh: (mesh) => set({ selectedMesh: mesh, selectedMeshName: mesh?.name || null }),
@@ -176,6 +180,9 @@ export const useModelStore = create<ModelState>()(
           return { transformsByMesh: { ...state.transformsByMesh, [meshKey]: next } };
         });
       },
+      setMeshVisibility: (updates) => {
+        set((state) => ({ visibilityByMesh: { ...state.visibilityByMesh, ...updates } }));
+      },
       loadModelFromBuffer: async () => {
         const { modelBuffer } = get();
         console.log('loadModelFromBuffer called. Buffer exists:', !!modelBuffer, 'Size:', modelBuffer instanceof ArrayBuffer ? modelBuffer.byteLength : 'N/A');
@@ -196,7 +203,7 @@ export const useModelStore = create<ModelState>()(
             }
           });
 
-          const { selectedMeshName, transformsByMesh } = get();
+          const { selectedMeshName, transformsByMesh, visibilityByMesh } = get();
           let selectedMesh = null;
           if (selectedMeshName) {
             selectedMesh = meshes.find(m => m.name === selectedMeshName) || null;
@@ -210,6 +217,12 @@ export const useModelStore = create<ModelState>()(
             m.rotation.set(t.rotation[0], t.rotation[1], t.rotation[2]);
             m.scale.fromArray(t.scale);
             m.updateMatrix();
+          }
+
+          // Re-apply persisted per-mesh visibility (absent = visible)
+          for (const m of meshes) {
+            const v = visibilityByMesh[meshKeyOf(m)];
+            if (v !== undefined) m.visible = v;
           }
 
           set({ model: result.scene, meshes, selectedMesh });
@@ -226,6 +239,7 @@ export const useModelStore = create<ModelState>()(
         modelName: state.modelName,
         selectedMeshName: state.selectedMeshName,
         transformsByMesh: state.transformsByMesh,
+        visibilityByMesh: state.visibilityByMesh,
       }),
       onRehydrateStorage: () => (state) => {
         if (state) {
@@ -254,6 +268,14 @@ useModelStore.subscribe((state, prev) => {
     m.rotation.set(t.rotation[0], t.rotation[1], t.rotation[2]);
     m.scale.fromArray(t.scale);
     m.updateMatrix();
+  }
+});
+
+// Keep live meshes' visibility in sync with the persisted/edited map.
+useModelStore.subscribe((state, prev) => {
+  if (state.visibilityByMesh === prev.visibilityByMesh) return;
+  for (const m of state.meshes) {
+    m.visible = state.visibilityByMesh[meshKeyOf(m)] ?? true;
   }
 });
 

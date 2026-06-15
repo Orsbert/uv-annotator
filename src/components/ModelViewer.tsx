@@ -14,6 +14,10 @@ import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib';
 // keeps shading on the part while making annotations pop.
 const ANNOTATION_EMISSIVE_INTENSITY = 0.6;
 
+// three.js Object3D.onBeforeRender defaults to an empty function; we restore to
+// this when turning "show on top" off so the depth-clear hook is removed.
+const NOOP_BEFORE_RENDER: THREE.Object3D['onBeforeRender'] = () => {};
+
 function CameraController() {
   const { camera } = useThree();
   const controlsRef = useRef<OrbitControlsImpl>(null);
@@ -111,6 +115,24 @@ function Scene() {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, []);
+
+  // The selected mesh always renders on top so the annotations you're working on
+  // are visible even when other parts occlude it. renderOrder alone isn't enough
+  // for opaque meshes (the depth buffer still rejects them), so we also clear the
+  // depth buffer right before this mesh draws. Combined with the high renderOrder
+  // it paints over everything already rendered while still self-occluding correctly
+  // (front faces over back faces) — which depthTest=false alone wouldn't do. The
+  // cleanup resets the previously-selected mesh when the selection changes.
+  useEffect(() => {
+    const mesh = selectedMesh;
+    if (!mesh) return;
+    mesh.renderOrder = 999;
+    mesh.onBeforeRender = (renderer) => renderer.clearDepth();
+    return () => {
+      mesh.renderOrder = 0;
+      mesh.onBeforeRender = NOOP_BEFORE_RENDER;
+    };
+  }, [selectedMesh]);
 
   const showX = axisLock === null || axisLock === 'x' || axisLock === 'no-y' || axisLock === 'no-z';
   const showY = axisLock === null || axisLock === 'y' || axisLock === 'no-x' || axisLock === 'no-z';

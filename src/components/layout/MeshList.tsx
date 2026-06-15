@@ -1,18 +1,32 @@
 import { useState } from 'react';
 import { ChevronDown, ChevronRight, Eye, EyeOff, Box } from 'lucide-react';
-import { useModelStore } from '../../store/combinedStores';
+import { useModelStore, meshKeyOf } from '../../store/combinedStores';
 
 export function MeshList() {
   const meshes = useModelStore((state) => state.meshes);
   const selectedMesh = useModelStore((state) => state.selectedMesh);
   const setSelectedMesh = useModelStore((state) => state.setSelectedMesh);
+  const visibilityByMesh = useModelStore((state) => state.visibilityByMesh);
+  const setMeshVisibility = useModelStore((state) => state.setMeshVisibility);
 
   const [open, setOpen] = useState(true);
-  const [, setTick] = useState(0);
+
+  // Persisted visibility is the source of truth; absent means visible.
+  const isVisible = (mesh: typeof meshes[number]) => visibilityByMesh[meshKeyOf(mesh)] ?? true;
 
   const toggleVisibility = (mesh: typeof meshes[number]) => {
-    mesh.visible = !mesh.visible;
-    setTick((t) => t + 1);
+    setMeshVisibility({ [meshKeyOf(mesh)]: !isVisible(mesh) });
+  };
+
+  // Shift-click the eye to "isolate": hide every other mesh and keep this one.
+  // If this mesh is already the only one visible, restore all (toggle back).
+  const isolateMesh = (mesh: typeof meshes[number]) => {
+    const alreadyIsolated = meshes.every((m) => (m === mesh ? isVisible(m) : !isVisible(m)));
+    const updates: Record<string, boolean> = {};
+    meshes.forEach((m) => {
+      updates[meshKeyOf(m)] = alreadyIsolated ? true : m === mesh;
+    });
+    setMeshVisibility(updates);
   };
 
   return (
@@ -46,11 +60,12 @@ export function MeshList() {
                   className="p-0.5 hover:bg-accent-foreground/10 rounded"
                   onClick={(e) => {
                     e.stopPropagation();
-                    toggleVisibility(mesh);
+                    if (e.shiftKey) isolateMesh(mesh);
+                    else toggleVisibility(mesh);
                   }}
-                  title={mesh.visible ? 'Hide' : 'Show'}
+                  title={`${isVisible(mesh) ? 'Hide' : 'Show'} · ⇧ click to isolate`}
                 >
-                  {mesh.visible ? <Eye className="h-3 w-3" /> : <EyeOff className="h-3 w-3 text-muted-foreground" />}
+                  {isVisible(mesh) ? <Eye className="h-3 w-3" /> : <EyeOff className="h-3 w-3 text-muted-foreground" />}
                 </button>
 
                 <div className={`w-1.5 h-1.5 rounded-full ${isSelected ? 'bg-primary' : 'bg-muted-foreground/30'}`} />
