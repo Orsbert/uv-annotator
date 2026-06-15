@@ -259,6 +259,62 @@ export function AnnotationBox({ annotation, isSelected, onSelect, onChange }: An
 }
 
 /**
+ * Draw an annotation's label as a solid color "chip" with white text at the
+ * box's top-left corner. A chip (rather than bare 8px text) is what makes the
+ * label legible once the canvas is baked into the mesh texture and downscaled
+ * across a face. Drawn in whatever transform the caller has set, so it follows
+ * the annotation's rotation.
+ */
+function drawAnnotationLabel(
+  ctx: CanvasRenderingContext2D,
+  label: string,
+  x: number,
+  y: number,
+  colorTheme: { main: string }
+) {
+  if (!label) return;
+
+  const fontSize = 16;
+  const padX = 7;
+  const padY = 4;
+  const inset = 6;
+
+  ctx.save();
+  ctx.font = `600 ${fontSize}px Arial`;
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'top';
+
+  const textW = ctx.measureText(label).width;
+  const chipW = textW + padX * 2;
+  const chipH = fontSize + padY * 2;
+  const chipX = x + inset;
+  const chipY = y + inset;
+
+  // Chip background — solid brand color with a soft drop shadow so it lifts off
+  // a busy background texture.
+  ctx.globalAlpha = 1;
+  ctx.fillStyle = colorTheme.main;
+  ctx.shadowColor = 'rgba(0, 0, 0, 0.4)';
+  ctx.shadowBlur = 4;
+  ctx.shadowOffsetY = 1;
+  ctx.beginPath();
+  if (typeof ctx.roundRect === 'function') {
+    ctx.roundRect(chipX, chipY, chipW, chipH, 5);
+  } else {
+    ctx.rect(chipX, chipY, chipW, chipH);
+  }
+  ctx.fill();
+
+  // Label text (no shadow on the glyphs themselves).
+  ctx.shadowColor = 'transparent';
+  ctx.shadowBlur = 0;
+  ctx.shadowOffsetY = 0;
+  ctx.fillStyle = '#ffffff';
+  ctx.fillText(label, chipX + padX, chipY + padY);
+  ctx.restore();
+}
+
+/**
  * Draw a single annotation onto a 2D canvas context.
  * The canvas coordinate system is pixel space (0‑1024).
  */
@@ -292,37 +348,20 @@ export function renderAnnotationToCanvas(ctx: CanvasRenderingContext2D, ann: Ann
     ctx.restore();
   }
 
-  // Filled rectangle (reduced alpha when an image is present so it stays readable)
+  // Tinted fill. colorTheme.light already carries 0.4 alpha, so we don't multiply
+  // it down again (the old 0.4 × 0.35 ≈ 0.14 wash was invisible on the mesh). When
+  // a decal image is present we keep the fill faint so the image stays readable.
   ctx.fillStyle = colorTheme.light;
-  ctx.globalAlpha = annImage ? 0.15 : 0.35;
+  ctx.globalAlpha = annImage ? 0.35 : 1;
   ctx.fillRect(x, y, width, height);
   ctx.globalAlpha = 1.0;
 
-  // Border
+  // Bold, fully-saturated border so the box reads at texture resolution.
   ctx.strokeStyle = colorTheme.main;
-  ctx.lineWidth = 1.5;
+  ctx.lineWidth = 4;
   ctx.strokeRect(x, y, width, height);
 
-  // Label inside box at top-left with padding
-  const fontSize = 8;
-  const padding = 4;
-
-  // Draw shadow first
-  ctx.fillStyle = '#000000';
-  ctx.font = `${fontSize}px Arial`;
-  ctx.textAlign = 'left';
-  ctx.textBaseline = 'top';
-  // Draw shadow in multiple directions for blur effect
-  ctx.globalAlpha = 0.8;
-  ctx.fillText(label, x + padding - 1, y + padding + 1);
-  ctx.fillText(label, x + padding + 1, y + padding + 1);
-  ctx.fillText(label, x + padding - 1, y + padding - 1);
-  ctx.fillText(label, x + padding + 1, y + padding - 1);
-  ctx.globalAlpha = 1;
-  
-  // Draw white text on top
-  ctx.fillStyle = '#ffffff';
-  ctx.fillText(label, x + padding, y + padding);
+  drawAnnotationLabel(ctx, label, x, y, colorTheme);
 
   ctx.restore();
 }
@@ -349,29 +388,20 @@ export function renderAnnotationBaseToCanvas(ctx: CanvasRenderingContext2D, ann:
   ctx.rotate((rotation * Math.PI) / 180);
   ctx.translate(-(x + width / 2), -(y + height / 2));
 
+  // Tinted fill. colorTheme.light already carries 0.4 alpha, so we don't multiply
+  // it down again (the old 0.4 × 0.35 ≈ 0.14 wash was invisible on the mesh). When
+  // a decal image is present we keep the fill faint so the image stays readable.
   ctx.fillStyle = colorTheme.light;
-  ctx.globalAlpha = hasImage ? 0.15 : 0.35;
+  ctx.globalAlpha = hasImage ? 0.35 : 1;
   ctx.fillRect(x, y, width, height);
   ctx.globalAlpha = 1.0;
 
+  // Bold, fully-saturated border so the box reads at texture resolution.
   ctx.strokeStyle = colorTheme.main;
-  ctx.lineWidth = 1.5;
+  ctx.lineWidth = 4;
   ctx.strokeRect(x, y, width, height);
 
-  const fontSize = 8;
-  const padding = 4;
-  ctx.fillStyle = '#000000';
-  ctx.font = `${fontSize}px Arial`;
-  ctx.textAlign = 'left';
-  ctx.textBaseline = 'top';
-  ctx.globalAlpha = 0.8;
-  ctx.fillText(label, x + padding - 1, y + padding + 1);
-  ctx.fillText(label, x + padding + 1, y + padding + 1);
-  ctx.fillText(label, x + padding - 1, y + padding - 1);
-  ctx.fillText(label, x + padding + 1, y + padding - 1);
-  ctx.globalAlpha = 1;
-  ctx.fillStyle = '#ffffff';
-  ctx.fillText(label, x + padding, y + padding);
+  drawAnnotationLabel(ctx, label, x, y, colorTheme);
 
   ctx.restore();
 }

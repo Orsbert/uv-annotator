@@ -9,6 +9,11 @@ import { useSessionStore } from '../store/useSessionStore';
 import * as THREE from 'three';
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib';
 
+// How strongly the annotation texture self-illuminates on the mesh. 0 = fully
+// lit (annotations can wash out), 1 = full emissive (flat/unlit look). ~0.6
+// keeps shading on the part while making annotations pop.
+const ANNOTATION_EMISSIVE_INTENSITY = 0.6;
+
 function CameraController() {
   const { camera } = useThree();
   const controlsRef = useRef<OrbitControlsImpl>(null);
@@ -133,7 +138,17 @@ function Scene() {
     }
     const material = selectedMesh.material as THREE.MeshStandardMaterial;
     if (material.map !== uvTexture) {
+      // Albedo: the texture still receives scene lighting, so the part keeps its
+      // shaded, three-dimensional look.
       material.map = uvTexture;
+      // Emissive: feed the SAME texture as an emissive map so the annotations
+      // self-illuminate. This keeps colored boxes/labels readable in shadow and
+      // stops them washing to white under the bright preview lights, while the
+      // base surface still reads as shaded geometry. emissive must be white for
+      // the emissiveMap to show in full color (it multiplies the map).
+      material.emissiveMap = uvTexture;
+      material.emissive = new THREE.Color(0xffffff);
+      material.emissiveIntensity = ANNOTATION_EMISSIVE_INTENSITY;
       material.needsUpdate = true;
     }
     // Per-pixel transparency comes from the texture's alpha channel; opacity stays at 1.
@@ -306,9 +321,13 @@ function Scene() {
   return (
     <>
       <color attach="background" args={['#1a1a1a']} />
-      <ambientLight intensity={0.5} />
-      <directionalLight position={[10, 10, 5]} intensity={1} />
-      <directionalLight position={[-10, -10, -5]} intensity={0.3} />
+      {/* Lighting is eased from the usual studio setup so a white/light texture
+          doesn't clamp to pure white — that washout is what made annotations
+          hard to read. Combined with the emissive annotation map, colors now
+          read true while the part keeps its shaded form. */}
+      <ambientLight intensity={0.4} />
+      <directionalLight position={[10, 10, 5]} intensity={0.7} />
+      <directionalLight position={[-10, -10, -5]} intensity={0.25} />
       
       {model && (
         <primitive 
@@ -365,7 +384,7 @@ function Scene() {
       )}
 
       <CameraController />
-      <Environment preset="studio" />
+      <Environment preset="studio" environmentIntensity={0.4} />
     </>
   );
 }

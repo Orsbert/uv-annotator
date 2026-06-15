@@ -65,6 +65,8 @@ export function generateUVLayout(mesh: THREE.Mesh, canvasSize: number = 1024): {
     ctx.fillText('No UV mapping found', canvas.width / 2, canvas.height / 2);
     
     const texture = new THREE.CanvasTexture(canvas);
+    texture.flipY = false;
+    texture.colorSpace = THREE.SRGBColorSpace;
     return { canvas, texture };
   }
   
@@ -128,7 +130,11 @@ export function generateUVLayout(mesh: THREE.Mesh, canvasSize: number = 1024): {
   texture.needsUpdate = true;
   // Prevent vertical flip so UV layout matches three.js UV coordinates (origin bottom-left)
   texture.flipY = false;
-  
+  // The canvas is painted in sRGB; tag it so three.js does the sRGB→linear
+  // conversion. Without this the renderer treats the values as linear and the
+  // mesh renders noticeably brighter/washed-out than the 2D canvas.
+  texture.colorSpace = THREE.SRGBColorSpace;
+
   return { canvas, texture };
 }
 
