@@ -6,6 +6,7 @@ import { AnnotationEditor } from './components/AnnotationEditor';
 import { MeshSelector } from './components/MeshSelector';
 import { AnnotationControls } from './components/AnnotationControls';
 import { SessionSidebar } from './components/SessionSidebar';
+import { MigrationPrompt } from './components/MigrationPrompt';
 import { LeftSidebar } from './components/layout/LeftSidebar';
 import { PropertiesPanel } from './components/layout/PropertiesPanel';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
@@ -52,6 +53,8 @@ function App() {
       <Toolbar onToggleSidebar={() => setIsSidebarOpen(!isSidebarOpen)} />
       
       <SessionSidebar isOpen={isSidebarOpen} onClose={() => setIsSidebarOpen(false)} />
+
+      <MigrationPrompt />
 
       <PanelGroup direction="horizontal" className="flex-1" autoSaveId="uv-annotator-layout">
         {/* Left Sidebar - Meshes + Annotations */}

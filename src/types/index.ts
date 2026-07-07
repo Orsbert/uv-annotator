@@ -21,6 +21,12 @@ export interface Annotation {
   imageFit?: ImageFit;
   imageAlign?: ImageAlign;
   imageOpacity?: number;
+  /**
+   * The mesh UV frame this annotation was authored against (see uvGenerator).
+   * Absent on annotations created before the UV-frame fix; used to detect ones
+   * that may be mispositioned on out-of-range-UV meshes.
+   */
+  authoredFrame?: { minU: number; minV: number; spanU: number; spanV: number };
 }
 
 /**

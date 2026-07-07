@@ -5,7 +5,7 @@ import { useAnnotationStore } from '../store/combinedStores';
 import { usePaintStore, useOverlayStore, CANVAS_SCALE_OPTIONS } from '../store/combinedStores';
 import { useSessionStore } from '../store/useSessionStore';
 import { Button } from './ui/button';
-import { generateUVLayout } from '../utils/uvGenerator';
+import { generateUVLayout, computeUVFrame, applyUVFrameToTexture } from '../utils/uvGenerator';
 import { renderAnnotationsToCanvas, renderOverlaysToCanvas } from '../services/annotationRenderer';
 import { useEffect, useState } from 'react';
 import { GLTFExporter } from 'three-stdlib';
@@ -110,6 +110,9 @@ export function Toolbar({ onToggleSidebar }: ToolbarProps) {
           cleanTexture = new THREE.CanvasTexture(c);
           cleanTexture.colorSpace = THREE.SRGBColorSpace;
           cleanTexture.flipY = false;
+          // Match the live texture's UV remap so the background lands correctly
+          // on meshes whose UVs fall outside 0-1.
+          applyUVFrameToTexture(cleanTexture, computeUVFrame(obj));
         }
         const clonedMat = mat.clone();
         clonedMat.map = cleanTexture;

@@ -1,9 +1,79 @@
 import * as THREE from 'three';
 
+export interface UVFrame {
+  /** UV coordinate mapped to the canvas top-left (x=0, y=0). */
+  minU: number;
+  minV: number;
+  /** UV width/height the canvas spans. Never zero. */
+  spanU: number;
+  spanV: number;
+}
+
 /**
- * Compute the tight bounding box of a mesh's UV island, in canvas pixel space.
- * Returns null if the mesh has no UVs. Box uses the same V-axis convention as
- * the rest of the app (no flip), so it lines up with the rendered wireframe.
+ * The region of UV space a mesh's texture canvas represents.
+ *
+ * Defaults to the canonical [0,1]² square but EXPANDS to enclose any UVs that
+ * fall outside it. Many exported models (tiled or un-normalized unwraps) carry
+ * UVs ranging into the tens or hundreds. Without this the app assumes 0-1, so a
+ * painted region lands only on the thin sliver of surface whose UV happens to
+ * fall in [0,1] and shows up microscopic. Enclosing the real UV range makes the
+ * whole island fill the canvas instead.
+ *
+ * For meshes whose UVs already sit inside [0,1] the frame is exactly [0,1]² — an
+ * identity transform — so existing models and their saved annotations are
+ * unaffected. Cached on the mesh; UVs don't change at runtime.
+ */
+export function computeUVFrame(mesh: THREE.Mesh): UVFrame {
+  const cached = mesh.userData.__uvFrame as UVFrame | undefined;
+  if (cached) return cached;
+
+  // Seed with the canonical square so the frame always contains [0,1].
+  let minU = 0, minV = 0, maxU = 1, maxV = 1;
+  const uvAttr = mesh.geometry.attributes.uv as THREE.BufferAttribute | undefined;
+  if (uvAttr && uvAttr.count > 0) {
+    for (let i = 0; i < uvAttr.count; i++) {
+      const u = uvAttr.getX(i);
+      const v = uvAttr.getY(i);
+      if (u < minU) minU = u;
+      if (u > maxU) maxU = u;
+      if (v < minV) minV = v;
+      if (v > maxV) maxV = v;
+    }
+  }
+  const frame: UVFrame = { minU, minV, spanU: maxU - minU || 1, spanV: maxV - minV || 1 };
+  mesh.userData.__uvFrame = frame;
+  return frame;
+}
+
+/** Map a raw UV coordinate into frame-normalized canvas pixel space (no V flip). */
+export function uvToFrameCanvas(u: number, v: number, frame: UVFrame, canvasSize: number) {
+  return {
+    x: ((u - frame.minU) / frame.spanU) * canvasSize,
+    y: ((v - frame.minV) / frame.spanV) * canvasSize,
+  };
+}
+
+/**
+ * Configure a canvas texture so a mesh's raw UVs sample into a frame-normalized
+ * canvas. The canvas is painted spanning the frame's UV region; offset/repeat
+ * remap the mesh's raw UVs into that 0-1 canvas. For an identity frame ([0,1]²)
+ * this leaves repeat=(1,1) offset=(0,0), matching prior behavior exactly.
+ * GLTFExporter serializes offset/repeat as KHR_texture_transform, so baked
+ * exports stay aligned too.
+ */
+export function applyUVFrameToTexture(texture: THREE.Texture, frame: UVFrame): void {
+  texture.wrapS = THREE.ClampToEdgeWrapping;
+  texture.wrapT = THREE.ClampToEdgeWrapping;
+  texture.repeat.set(1 / frame.spanU, 1 / frame.spanV);
+  texture.offset.set(-frame.minU / frame.spanU, -frame.minV / frame.spanV);
+  texture.needsUpdate = true;
+}
+
+/**
+ * Bounding box of a mesh's UV island in canvas pixel space, using the mesh's UV
+ * frame. Returns null if the mesh has no UVs. For a normalized model this is the
+ * island's rect within [0,1]; for an out-of-range model the island fills the
+ * canvas. Uses the same V-axis convention (no flip) as the rendered wireframe.
  */
 export function computeUVBoundingBox(
   mesh: THREE.Mesh,
@@ -23,18 +93,10 @@ export function computeUVBoundingBox(
   }
   if (!isFinite(minU)) return null;
 
-  // Clamp to [0,1] for UVs that overshoot the canonical square
-  minU = Math.max(0, Math.min(1, minU));
-  maxU = Math.max(0, Math.min(1, maxU));
-  minV = Math.max(0, Math.min(1, minV));
-  maxV = Math.max(0, Math.min(1, maxV));
-
-  return {
-    x: minU * canvasSize,
-    y: minV * canvasSize,
-    width: (maxU - minU) * canvasSize,
-    height: (maxV - minV) * canvasSize,
-  };
+  const frame = computeUVFrame(mesh);
+  const tl = uvToFrameCanvas(minU, minV, frame, canvasSize);
+  const br = uvToFrameCanvas(maxU, maxV, frame, canvasSize);
+  return { x: tl.x, y: tl.y, width: br.x - tl.x, height: br.y - tl.y };
 }
 
 export function generateUVLayout(mesh: THREE.Mesh, canvasSize: number = 1024): { canvas: HTMLCanvasElement; texture: THREE.CanvasTexture } {
@@ -70,10 +132,14 @@ export function generateUVLayout(mesh: THREE.Mesh, canvasSize: number = 1024): {
     return { canvas, texture };
   }
   
+  // Normalize UVs into the mesh's frame so out-of-range (tiled/un-normalized)
+  // unwraps still fill the canvas instead of overflowing off it.
+  const frame = computeUVFrame(mesh);
+
   // Draw UV wireframe
   ctx.strokeStyle = '#000000';
   ctx.lineWidth = 1;
-  
+
   const index = geometry.index;
   const position = geometry.attributes.position;
   
@@ -91,8 +157,7 @@ export function generateUVLayout(mesh: THREE.Mesh, canvasSize: number = 1024): {
         const idx = indices[j];
         const u = uvAttribute.getX(idx);
         const v = uvAttribute.getY(idx); // Use V coordinate as-is (no flip)
-        const x = u * canvas.width;
-        const y = v * canvas.height;
+        const { x, y } = uvToFrameCanvas(u, v, frame, canvas.width);
         
         if (j === 0) {
           ctx.moveTo(x, y);
@@ -111,8 +176,7 @@ export function generateUVLayout(mesh: THREE.Mesh, canvasSize: number = 1024): {
         const idx = i + j;
         const u = uvAttribute.getX(idx);
         const v = uvAttribute.getY(idx); // Use V coordinate as-is (no flip)
-        const x = u * canvas.width;
-        const y = v * canvas.height;
+        const { x, y } = uvToFrameCanvas(u, v, frame, canvas.width);
         
         if (j === 0) {
           ctx.moveTo(x, y);
@@ -134,6 +198,9 @@ export function generateUVLayout(mesh: THREE.Mesh, canvasSize: number = 1024): {
   // conversion. Without this the renderer treats the values as linear and the
   // mesh renders noticeably brighter/washed-out than the 2D canvas.
   texture.colorSpace = THREE.SRGBColorSpace;
+  // Remap the mesh's raw UVs into the frame-normalized canvas (identity for
+  // meshes whose UVs already fit [0,1]).
+  applyUVFrameToTexture(texture, frame);
 
   return { canvas, texture };
 }

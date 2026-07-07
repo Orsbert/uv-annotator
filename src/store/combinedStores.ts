@@ -8,6 +8,7 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three-stdlib';
 import type { Annotation } from '../types';
 import { ANNOTATION_COLORS } from '../types';
+import { computeUVFrame, uvToFrameCanvas } from '../utils/uvGenerator';
 
 // Tiny trailing-edge debouncer used to coalesce rapid state changes (drags, scrubs,
 // slider tweaks) into one undo entry per "gesture". Returns a debounced version
@@ -292,6 +293,8 @@ export interface AnnotationState {
   pendingLabelEdit: string | null;
   addAnnotation: (annotation: Annotation, meshKey?: string) => void;
   updateAnnotation: (id: string, updates: Partial<Annotation>) => void;
+  /** Apply many id-keyed patches in a single update (used by frame migration). */
+  patchAnnotations: (patches: Array<{ id: string; updates: Partial<Annotation> }>) => void;
   deleteAnnotation: (id: string) => void;
   setSelectedAnnotationId: (id: string | null) => void;
   setPendingLabelEdit: (id: string | null) => void;
@@ -311,13 +314,34 @@ export const useAnnotationStore = create<AnnotationState>()(
       pendingLabelEdit: null,
       addAnnotation: (annotation, meshKey) => {
         const key = meshKey ?? currentMeshKey();
+        // Stamp the mesh's current UV frame so we can later tell this annotation
+        // apart from ones authored before the frame fix (which lack the stamp).
+        let stamped = annotation;
+        if (!annotation.authoredFrame) {
+          const { meshes, selectedMesh } = useModelStore.getState();
+          const mesh = meshes.find((m) => meshKeyOf(m) === key) ?? selectedMesh;
+          if (mesh) stamped = { ...annotation, authoredFrame: computeUVFrame(mesh) };
+        }
         set((state) => ({
           annotationsByMesh: {
             ...state.annotationsByMesh,
-            [key]: [...(state.annotationsByMesh[key] ?? []), annotation],
+            [key]: [...(state.annotationsByMesh[key] ?? []), stamped],
           },
-          selectedAnnotationId: annotation.id,
+          selectedAnnotationId: stamped.id,
         }));
+      },
+      patchAnnotations: (patches) => {
+        if (patches.length === 0) return;
+        const byId = new Map(patches.map((p) => [p.id, p.updates]));
+        set((state) => {
+          const next: Record<string, Annotation[]> = {};
+          for (const key of Object.keys(state.annotationsByMesh)) {
+            next[key] = state.annotationsByMesh[key].map((a) =>
+              byId.has(a.id) ? { ...a, ...byId.get(a.id)! } : a
+            );
+          }
+          return { annotationsByMesh: next };
+        });
       },
       updateAnnotation: (id, updates) => {
         set((state) => {
@@ -723,11 +747,12 @@ export const usePaintStore = create<PaintState>()(
         const uvTexture = textureByMesh[meshKey];
         const { brushSize } = state;
 
-        if (!uvCanvas) return;
+        if (!uvCanvas || !selectedMesh) return;
         const ctx = uvCanvas.getContext('2d');
         if (!ctx) return;
-        const x = coord.u * uvCanvas.width;
-        const y = coord.v * uvCanvas.height; // Use V as-is (no flip)
+        // Remap raw UV (may fall well outside 0-1) into frame-normalized pixels.
+        const frame = computeUVFrame(selectedMesh);
+        const { x, y } = uvToFrameCanvas(coord.u, coord.v, frame, uvCanvas.width);
         ctx.fillStyle = 'rgba(0, 255, 0, 0.5)';
         ctx.beginPath();
         ctx.arc(x, y, brushSize / 2, 0, Math.PI * 2);
@@ -747,13 +772,14 @@ export const usePaintStore = create<PaintState>()(
         const { annotationsByMesh, addAnnotation, setPendingLabelEdit } = useAnnotationStore.getState();
         const annotations = annotationsByMesh[meshKey] ?? [];
 
-        if (paintedUVCoords.length === 0 || !uvCanvas) return;
+        if (paintedUVCoords.length === 0 || !uvCanvas || !selectedMesh) return;
 
-        // Convert UV coords (0-1) to pixel coords
-        const pixelCoords = paintedUVCoords.map(({ u, v }) => ({
-          x: u * uvCanvas.width,
-          y: v * uvCanvas.height, // Use V as-is (no flip)
-        }));
+        // Convert raw UV coords into frame-normalized pixel coords (handles
+        // meshes whose UVs range outside 0-1).
+        const frame = computeUVFrame(selectedMesh);
+        const pixelCoords = paintedUVCoords.map(({ u, v }) =>
+          uvToFrameCanvas(u, v, frame, uvCanvas.width)
+        );
 
         // Calculate bounding box
         const minX = Math.min(...pixelCoords.map(p => p.x));
