@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { ChevronDown, ChevronRight, ImagePlus, Trash2 } from 'lucide-react';
-import { useAnnotationStore, useModelStore, meshKeyOf, EMPTY_ANNOTATIONS } from '../../store/combinedStores';
+import { useAnnotationStore, useModelStore, useCanvasStore, meshKeyOf, EMPTY_ANNOTATIONS } from '../../store/combinedStores';
 import type { ImageAlign, ImageFit } from '../../types';
 import { Input } from '../ui/input';
 import { Label } from '../ui/label';
@@ -8,6 +8,7 @@ import { Button } from '../ui/button';
 import { OverlayControls } from './OverlayControls';
 import { BackgroundTextureControls } from './BackgroundTextureControls';
 import { MeshControls } from './MeshControls';
+import { computeUVFrame } from '../../utils/uvGenerator';
 
 const ALIGN_GRID: ImageAlign[][] = [
   ['top-left', 'top-center', 'top-right'],
@@ -16,12 +17,34 @@ const ALIGN_GRID: ImageAlign[][] = [
 ];
 
 export function PropertiesPanel() {
-  const meshKey = meshKeyOf(useModelStore((s) => s.selectedMesh));
+  const selectedMesh = useModelStore((s) => s.selectedMesh);
+  const meshKey = meshKeyOf(selectedMesh);
+  const canvasSize = useCanvasStore((s) => s.canvasSize);
   const selectedAnnotationId = useAnnotationStore((state) => state.selectedAnnotationId);
   const annotations = useAnnotationStore((state) => state.annotationsByMesh[meshKey] ?? EMPTY_ANNOTATIONS);
   const updateAnnotation = useAnnotationStore((state) => state.updateAnnotation);
 
   const selectedAnnotation = annotations.find((a) => a.id === selectedAnnotationId);
+
+  // The external customizer consumes each box in the mesh's *native* UV space
+  // (it maps `typed value / canvasSize` onto the model's raw UVs). For a
+  // normalized mesh (identity frame) that's identical to the editor X/Y/W/H; for
+  // an out-of-range mesh (e.g. the mug, UVs spanning hundreds) the editor values
+  // are frame-relative and must be mapped back to native UV before pasting.
+  const frame = selectedMesh ? computeUVFrame(selectedMesh) : null;
+  const frameIsIdentity =
+    !frame || (frame.minU === 0 && frame.minV === 0 && frame.spanU === 1 && frame.spanV === 1);
+  const customizerCoords =
+    selectedAnnotation && frame && !frameIsIdentity
+      ? {
+          x: frame.minU * canvasSize + selectedAnnotation.x * frame.spanU,
+          y: frame.minV * canvasSize + selectedAnnotation.y * frame.spanV,
+          width: selectedAnnotation.width * frame.spanU,
+          height: selectedAnnotation.height * frame.spanV,
+          spanU: frame.spanU,
+          spanV: frame.spanV,
+        }
+      : null;
 
   const [transformOpen, setTransformOpen] = useState(true);
   const [annotationOpen, setAnnotationOpen] = useState(true);
@@ -64,6 +87,13 @@ export function PropertiesPanel() {
       imageData: undefined,
       imageName: undefined,
     });
+  };
+
+  const copyCustomizerCoords = () => {
+    if (!customizerCoords) return;
+    const { x, y, width, height } = customizerCoords;
+    const text = `${x.toFixed(1)}, ${y.toFixed(1)}, ${width.toFixed(1)}, ${height.toFixed(1)}`;
+    navigator.clipboard?.writeText(text);
   };
 
   return (
@@ -150,6 +180,40 @@ export function PropertiesPanel() {
               </div>
             )}
           </div>
+
+          {/* Customizer coordinates — shown only for out-of-range-UV meshes,
+              where the editor X/Y/W/H are frame-relative and differ from what the
+              customizer expects. */}
+          {customizerCoords && (
+            <div className="border-b bg-amber-500/[0.06]">
+              <div className="p-3 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-semibold">Customizer coords</span>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-6 px-2 text-[11px]"
+                    onClick={copyCustomizerCoords}
+                  >
+                    Copy
+                  </Button>
+                </div>
+                <p className="text-[11px] leading-snug text-muted-foreground">
+                  This mesh's UVs run outside 0–1 (range ≈ {customizerCoords.spanU.toFixed(0)}×
+                  {customizerCoords.spanV.toFixed(0)}), so the X/Y/W/H above are frame-relative.
+                  Paste <span className="font-medium text-foreground">these</span> into the
+                  customizer instead. If it rejects them as out of range, the model's UVs need
+                  normalizing — tell me and I'll set that up.
+                </p>
+                <div className="grid grid-cols-2 gap-x-3 gap-y-1 font-mono text-[11px]">
+                  <div><span className="text-muted-foreground">X </span>{customizerCoords.x.toFixed(1)}</div>
+                  <div><span className="text-muted-foreground">Y </span>{customizerCoords.y.toFixed(1)}</div>
+                  <div><span className="text-muted-foreground">W </span>{customizerCoords.width.toFixed(1)}</div>
+                  <div><span className="text-muted-foreground">H </span>{customizerCoords.height.toFixed(1)}</div>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Annotation Section */}
           <div className="border-b">
