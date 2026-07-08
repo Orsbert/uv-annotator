@@ -1,7 +1,7 @@
 import { useState } from 'react';
-import { ChevronDown, ChevronRight, Eye, EyeOff, Plus, Copy, Trash2, Unlock, Wand2 } from 'lucide-react';
+import { ChevronDown, ChevronRight, Eye, EyeOff, Plus, Copy, Trash2, Wand2 } from 'lucide-react';
 import { useAnnotationStore, useModelStore, useCanvasStore, meshKeyOf, EMPTY_ANNOTATIONS } from '../../store/combinedStores';
-import { ANNOTATION_COLORS } from '../../types';
+import { ANNOTATION_COLORS, getColorTheme } from '../../types';
 import { Button } from '../ui/button';
 import { computeUVBoundingBox } from '../../utils/uvGenerator';
 
@@ -81,12 +81,15 @@ export function AnnotationOutliner() {
     <div className="flex flex-col min-h-0">
       {/* Section header */}
       <button
-        className="w-full flex items-center gap-2 p-3 hover:bg-accent/50 text-sm font-semibold border-b"
+        className="w-full flex items-center gap-2 p-3 hover:bg-accent/50 text-sm font-semibold border-b focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
         onClick={() => setOpen(!open)}
       >
         {open ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-        Annotations
-        <span className="ml-auto text-xs text-muted-foreground">{annotations.length}</span>
+        <span className="shrink-0">Annotations</span>
+        {selectedMesh?.name && (
+          <span className="min-w-0 truncate text-xs font-normal text-muted-foreground">· {selectedMesh.name}</span>
+        )}
+        <span className="ml-auto shrink-0 text-xs text-muted-foreground">{annotations.length}</span>
       </button>
 
       {open && (
@@ -96,38 +99,37 @@ export function AnnotationOutliner() {
             {annotations.length === 0 && (
               <p className="text-xs text-muted-foreground text-center py-3">No annotations</p>
             )}
-            {annotations.map((ann) => (
-              <div
-                key={ann.id}
-                className={`flex items-center gap-1 px-2 py-1 hover:bg-accent/50 cursor-pointer text-sm ${
-                  ann.id === selectedAnnotationId ? 'bg-accent' : ''
-                }`}
-                onClick={() => setSelectedAnnotationId(ann.id)}
-              >
-                <button
-                  className="p-0.5 hover:bg-accent-foreground/10 rounded"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    updateAnnotation(ann.id, { visible: ann.visible !== false ? false : true });
-                  }}
+            {annotations.map((ann) => {
+              const isSel = ann.id === selectedAnnotationId;
+              return (
+                <div
+                  key={ann.id}
+                  className={`flex items-center gap-1 pr-2 text-sm border-l-2 ${
+                    isSel ? 'bg-accent border-primary' : 'border-transparent hover:bg-accent/50'
+                  }`}
                 >
-                  {ann.visible !== false ? <Eye className="h-3 w-3" /> : <EyeOff className="h-3 w-3 text-muted-foreground" />}
-                </button>
+                  <button
+                    className="p-1.5 rounded hover:bg-accent-foreground/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    onClick={() => updateAnnotation(ann.id, { visible: ann.visible === false })}
+                    aria-label={ann.visible !== false ? 'Hide annotation' : 'Show annotation'}
+                  >
+                    {ann.visible !== false ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5 text-muted-foreground" />}
+                  </button>
 
-                <div className={`w-1.5 h-1.5 rounded-full ${ann.id === selectedAnnotationId ? 'bg-primary' : 'bg-muted-foreground/30'}`} />
-
-                <span className="flex-1 truncate">{ann.label}</span>
-
-                <button
-                  className="p-0.5 hover:bg-accent-foreground/10 rounded opacity-0 group-hover:opacity-100"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                  }}
-                >
-                  <Unlock className="h-3 w-3" />
-                </button>
-              </div>
-            ))}
+                  <button
+                    className="flex-1 min-w-0 flex items-center gap-2 py-1.5 text-left rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+                    onClick={() => setSelectedAnnotationId(ann.id)}
+                    title={ann.label}
+                  >
+                    <span
+                      className="w-2.5 h-2.5 rounded-sm shrink-0"
+                      style={{ backgroundColor: getColorTheme(ann.color).main }}
+                    />
+                    <span className="flex-1 truncate">{ann.label}</span>
+                  </button>
+                </div>
+              );
+            })}
           </div>
 
           {/* Actions */}

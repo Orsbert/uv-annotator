@@ -1,4 +1,4 @@
-import { Download, Sparkles, Keyboard, Paintbrush, Check, Menu, Upload, ImagePlus, Box, Undo2, Redo2 } from 'lucide-react';
+import { Download, Sparkles, Keyboard, Paintbrush, Check, Menu, Upload, ImagePlus, Box, Undo2, Redo2, MoreHorizontal } from 'lucide-react';
 import { useModelStore, meshKeyOf, EMPTY_ANNOTATIONS, useHistoryStore } from '../store/combinedStores';
 import { useCanvasStore } from '../store/combinedStores';
 import { useAnnotationStore } from '../store/combinedStores';
@@ -38,6 +38,7 @@ export function Toolbar({ onToggleSidebar }: ToolbarProps) {
   const [bakeAnnotations, setBakeAnnotations] = useState(false);
   const [applyTransforms, setApplyTransforms] = useState(true);
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
+  const [moreMenuOpen, setMoreMenuOpen] = useState(false);
   const meshes = useModelStore((state) => state.meshes);
   const [selectedMeshKeys, setSelectedMeshKeys] = useState<Set<string>>(new Set());
   const canUndo = useHistoryStore((s) => s.past.length > 0);
@@ -336,15 +337,6 @@ export function Toolbar({ onToggleSidebar }: ToolbarProps) {
           Upload Model
         </Button>
 
-        <Button
-          onClick={() => document.getElementById('overlay-upload')?.click()}
-          variant="outline"
-          disabled={!uvCanvas}
-          title="Upload Template Overlay"
-        >
-          <ImagePlus className="mr-2 h-4 w-4" />
-          Overlay
-        </Button>
 
         {isPaintMode && (
           <>
@@ -371,47 +363,74 @@ export function Toolbar({ onToggleSidebar }: ToolbarProps) {
           </>
         )}
         
+        <div className="w-px h-6 bg-border" />
+
         <Button
           onClick={handleTogglePaintMode}
-          variant={isPaintMode ? "default" : "outline"}
-          disabled={!uvCanvas}
-          title="Paint Mode (P)"
-        >
-          <Paintbrush className="mr-2 h-4 w-4" />
-          {isPaintMode ? 'Exit Paint Mode' : 'Paint Mode'}
-        </Button>
-        
-        <Button
-          onClick={() => setShowShortcuts(!showShortcuts)}
-          variant="ghost"
+          variant={isPaintMode ? 'default' : 'ghost'}
           size="icon"
-          title="Keyboard Shortcuts (K)"
+          disabled={!uvCanvas}
+          title={isPaintMode ? 'Exit paint mode (P)' : 'Paint mode (P)'}
+          className="h-9 w-9"
         >
-          <Keyboard className="h-5 w-5" />
+          <Paintbrush className="h-4 w-4" />
         </Button>
         
-        {/* Canvas scale selector */}
+        <span className="text-xs text-muted-foreground pl-1">Texture</span>
+        
         <select
           value={canvasSize}
           onChange={(e) => setCanvasSize(Number(e.target.value) as typeof canvasSize)}
           className="h-9 rounded-md border bg-background px-2 text-sm"
-          title="Canvas resolution"
+          title="Texture resolution — the pixel space region coordinates use"
         >
           {CANVAS_SCALE_OPTIONS.map((size) => (
             <option key={size} value={size}>
-              {size}x{size}
+              {size}
             </option>
           ))}
         </select>
 
-        <Button
-          onClick={handleGenerateUV}
-          disabled={!selectedMesh}
-          title="Generate UV Layout (U)"
-        >
-          <Sparkles className="mr-2 h-4 w-4" />
-          Generate UV Layout
-        </Button>
+        <div className="relative">
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-9 w-9"
+            onClick={() => setMoreMenuOpen((o) => !o)}
+            title="More"
+          >
+            <MoreHorizontal className="h-4 w-4" />
+          </Button>
+          {moreMenuOpen && (
+            <>
+              <div className="fixed inset-0 z-40" onClick={() => setMoreMenuOpen(false)} />
+              <div className="absolute right-0 top-full mt-1 w-52 rounded-md border bg-popover shadow-lg z-50 p-1">
+                <button
+                  className="w-full flex items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-accent disabled:opacity-50 disabled:pointer-events-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  disabled={!uvCanvas}
+                  onClick={() => { setMoreMenuOpen(false); document.getElementById('overlay-upload')?.click(); }}
+                >
+                  <ImagePlus className="h-4 w-4" /> Overlay
+                </button>
+                <button
+                  className="w-full flex items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-accent disabled:opacity-50 disabled:pointer-events-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  disabled={!selectedMesh}
+                  onClick={() => { setMoreMenuOpen(false); handleGenerateUV(); }}
+                >
+                  <Sparkles className="h-4 w-4" /> Regenerate UV layout
+                </button>
+                <button
+                  className="w-full flex items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  onClick={() => { setMoreMenuOpen(false); setShowShortcuts((s) => !s); }}
+                >
+                  <Keyboard className="h-4 w-4" /> Keyboard shortcuts
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+
+        <div className="w-px h-6 bg-border" />
 
         {/* Export menu */}
         <div className="relative">
