@@ -9,6 +9,7 @@ import { ANNOTATION_COLORS } from '../types';
 import { AnnotationBox, renderAnnotationBasesToCanvas, renderAnnotationDecalsToCanvas, renderOverlaysToCanvas, subscribeAnnotationImages } from '../services/annotationRenderer';
 import { generateUVLayout } from '../utils/uvGenerator';
 import { Button } from './ui/button';
+import { AnnotationContextMenu } from './AnnotationContextMenu';
 
 // Deprecated AnnotationBoxProps interface removed.
 
@@ -53,6 +54,9 @@ export function AnnotationEditor() {
   const [isDrawing, setIsDrawing] = useState(false);
   const [drawStart, setDrawStart] = useState<{ x: number; y: number } | null>(null);
   const [currentRect, setCurrentRect] = useState<{ x: number; y: number; width: number; height: number } | null>(null);
+
+  // Right-click context menu for an annotation box (viewport coords + target id).
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; id: string } | null>(null);
   
   // Container dimensions for responsive sizing
   const [containerSize, setContainerSize] = useState({ width: 0, height: 0 });
@@ -84,6 +88,9 @@ export function AnnotationEditor() {
       window.removeEventListener('keyup', onKeyUp);
     };
   }, []);
+
+  // Close the context menu when the active mesh changes.
+  useEffect(() => setCtxMenu(null), [meshKey]);
 
   // Cache wireframe canvas -- only regenerate when mesh or canvasSize changes
   const wireframeCanvas = useMemo(() => {
@@ -488,6 +495,11 @@ export function AnnotationEditor() {
                 isSelected={annotation.id === selectedAnnotationId}
                 onSelect={() => setSelectedAnnotationId(annotation.id)}
                 onChange={(newAttrs) => updateAnnotation(annotation.id, newAttrs)}
+                onContextMenu={(e) => {
+                  e.evt.preventDefault();
+                  setSelectedAnnotationId(annotation.id);
+                  setCtxMenu({ x: e.evt.clientX, y: e.evt.clientY, id: annotation.id });
+                }}
               />
             ))}{/* Draw preview rectangle while dragging */}
             {isDrawing && currentRect && (
@@ -505,6 +517,19 @@ export function AnnotationEditor() {
           </Layer>
         </Stage>
       </div>
+
+      {ctxMenu && (() => {
+        const ann = annotations.find((a) => a.id === ctxMenu.id);
+        if (!ann) return null;
+        return (
+          <AnnotationContextMenu
+            annotation={ann}
+            x={ctxMenu.x}
+            y={ctxMenu.y}
+            onClose={() => setCtxMenu(null)}
+          />
+        );
+      })()}
     </div>
   );
 }

@@ -42,13 +42,14 @@ interface AnnotationBoxProps {
   isSelected: boolean;
   onSelect: () => void;
   onChange: (newAttrs: Partial<Annotation>) => void;
+  onContextMenu?: (e: Konva.KonvaEventObject<PointerEvent>) => void;
 }
 
 /**
  * Render a single annotation as a Konva Group.
  * This is a React component that properly uses hooks.
  */
-export function AnnotationBox({ annotation, isSelected, onSelect, onChange }: AnnotationBoxProps) {
+export function AnnotationBox({ annotation, isSelected, onSelect, onChange, onContextMenu }: AnnotationBoxProps) {
   const { x, y, width, height, rotation, label, color, imageData, imageFit, imageAlign, imageOpacity } = annotation;
   const rectGroupRef = useRef<Konva.Group>(null);
   const rectRef = useRef<Konva.Rect>(null);
@@ -71,13 +72,16 @@ export function AnnotationBox({ annotation, isSelected, onSelect, onChange }: An
       )
     : null;
 
-  // Attach transformer to the rectangle group only
+  // Attach the transformer to the rectangle group, and re-fit it whenever the
+  // box changes size/position programmatically (e.g. scaled from the context
+  // menu or edited in the properties panel) so the handles track the new box.
   useEffect(() => {
     if (isSelected && rectGroupRef.current && transformerRef.current) {
       transformerRef.current.nodes([rectGroupRef.current]);
+      transformerRef.current.forceUpdate();
       transformerRef.current.getLayer()?.batchDraw();
     }
-  }, [isSelected]);
+  }, [isSelected, width, height, x, y, rotation]);
 
   // Sync label position with rectangle group
   useEffect(() => {
@@ -106,6 +110,7 @@ export function AnnotationBox({ annotation, isSelected, onSelect, onChange }: An
         draggable
         onClick={onSelect}
         onTap={onSelect}
+        onContextMenu={onContextMenu}
         onMouseEnter={() => setIsHovered(true)}
         onMouseLeave={() => setIsHovered(false)}
         ref={rectGroupRef}
