@@ -42,29 +42,38 @@ export const EMPTY_ANNOTATIONS: Annotation[] = [];
 //   null               → unconstrained, all 3 handles visible
 export type AxisLock = null | 'x' | 'y' | 'z' | 'no-x' | 'no-y' | 'no-z';
 
+// The transform gizmo's active mode. Lives in the UI store (not local component
+// state) so both the mesh gizmo and the reference-plane gizmo respond to the same
+// G / R / S shortcuts.
+export type GizmoMode = 'translate' | 'rotate' | 'scale';
+
 interface UiState {
   surfaceDragMode: boolean;       // user toggle: drag selected mesh along nearby surfaces
   surfaceDragActive: boolean;     // transient: a drag is in progress, freeze OrbitControls
   axisLock: AxisLock;
+  gizmoMode: GizmoMode;
   setSurfaceDragMode: (v: boolean) => void;
   setSurfaceDragActive: (v: boolean) => void;
   setAxisLock: (a: AxisLock) => void;
+  setGizmoMode: (m: GizmoMode) => void;
 }
 
 export const useUiStore = create<UiState>((set) => ({
   surfaceDragMode: false,
   surfaceDragActive: false,
   axisLock: null,
+  gizmoMode: 'translate',
   setSurfaceDragMode: (surfaceDragMode) => set({ surfaceDragMode }),
   setSurfaceDragActive: (surfaceDragActive) => set({ surfaceDragActive }),
   setAxisLock: (axisLock) => set({ axisLock }),
+  setGizmoMode: (gizmoMode) => set({ gizmoMode }),
 }));
 
 /* -------------------------------------------------------------------------- */
 /* Cross-store undo / redo coordinator                                         */
 /* -------------------------------------------------------------------------- */
 
-export type UndoStoreName = 'annotation' | 'model' | 'canvas' | 'overlay';
+export type UndoStoreName = 'annotation' | 'model' | 'canvas' | 'overlay' | 'reference';
 
 // Filled in after each store is created. Lets the coordinator call undo/redo
 // without static circular imports.
@@ -716,6 +725,204 @@ temporalRegistry.overlay = {
   undo: () => useOverlayStore.temporal.getState().undo(),
   redo: () => useOverlayStore.temporal.getState().redo(),
   clearFuture: () => useOverlayStore.temporal.setState({ futureStates: [] }),
+};
+
+/** Reference Store — reference images placed on a plane in the 3D viewport for
+ * tracing. Distinct from the 2D `overlay` store (which draws onto the UV canvas):
+ * a reference lives in world space, is manipulated with the same TransformControls
+ * gizmo as meshes, and can either sit grounded in the scene (X-ray over the part)
+ * or pin to the camera as a rotoscope backdrop. */
+export type AlignCommand = 'camera' | 'front' | 'side' | 'top';
+
+export interface ReferenceItem {
+  id: string;
+  imageData: string;               // data URL (persisted)
+  imageName: string;
+  aspect: number;                  // width / height — sizes the plane geometry
+  visible: boolean;
+  opacity: number;                 // 0..1
+  position: [number, number, number];
+  rotation: [number, number, number]; // radians, Euler XYZ
+  scale: [number, number, number];    // z is always 1 (a plane)
+  showOnTop: boolean;              // X-ray: draw over the part regardless of depth
+  lockToView: boolean;            // rotoscope: pin to the camera each frame
+  // Grounded transform stashed on entering lock-to-view, restored on exit — so each
+  // mode remembers its own placement instead of reinterpreting the same numbers.
+  savedTransform?: {
+    position: [number, number, number];
+    rotation: [number, number, number];
+    scale: [number, number, number];
+  } | null;
+  image: HTMLImageElement | null; // runtime only (rehydrated from imageData)
+  // Transient one-shot command consumed by the 3D plane (needs the live camera).
+  // Never persisted or tracked in undo history.
+  pendingAlign?: AlignCommand | null;
+}
+
+export interface ReferenceState {
+  references: ReferenceItem[];
+  selectedReferenceId: string | null;
+  addReference: (dataUrl: string, name: string) => void;
+  updateReference: (id: string, updates: Partial<Omit<ReferenceItem, 'id'>>) => void;
+  // Toggle rotoscope mode. Stashes / restores the grounded transform so switching
+  // never makes the plane jump (offset resets to centered on enter, size preserved).
+  setLockToView: (id: string, value: boolean) => void;
+  // One-click size + center the plane onto the selected mesh (or whole model if none),
+  // the 3D analog of the 2D overlay's fitOverlayToCanvas.
+  fitReferenceToMesh: (id: string) => void;
+  removeReference: (id: string) => void;
+  removeAllReferences: () => void;
+  setSelectedReferenceId: (id: string | null) => void;
+  restoreReferences: () => Promise<void>;
+}
+
+export const useReferenceStore = create<ReferenceState>()(
+  temporal(
+    persist(
+      (set, get) => ({
+        references: [],
+        selectedReferenceId: null,
+        addReference: (dataUrl, name) => {
+          const id = `ref-${Date.now()}`;
+          const img = new window.Image();
+          img.src = dataUrl;
+          img.onload = () => {
+            const aspect = img.naturalHeight > 0 ? img.naturalWidth / img.naturalHeight : 1;
+            set((state) => ({
+              references: [
+                ...state.references,
+                {
+                  id,
+                  imageData: dataUrl,
+                  imageName: name,
+                  aspect,
+                  visible: true,
+                  opacity: 0.6,
+                  position: [0, 0, 0],
+                  rotation: [0, 0, 0],
+                  scale: [1.5, 1.5, 1],
+                  showOnTop: true,
+                  lockToView: false,
+                  image: img,
+                  // Face the camera on drop so it appears in front of the user
+                  // instead of edge-on at the origin.
+                  pendingAlign: 'camera',
+                },
+              ],
+              selectedReferenceId: id,
+            }));
+          };
+        },
+        updateReference: (id, updates) => {
+          set((state) => ({
+            references: state.references.map((r) => (r.id === id ? { ...r, ...updates } : r)),
+          }));
+        },
+        setLockToView: (id, value) => {
+          set((state) => ({
+            references: state.references.map((r) => {
+              if (r.id !== id || r.lockToView === value) return r;
+              if (value) {
+                // Entering rotoscope: remember the grounded placement, then start
+                // centered in the view (offset 0, no roll). Size carries over so the
+                // image doesn't abruptly resize.
+                return {
+                  ...r,
+                  lockToView: true,
+                  savedTransform: { position: r.position, rotation: r.rotation, scale: r.scale },
+                  position: [0, 0, 0],
+                  rotation: [0, 0, 0],
+                };
+              }
+              // Leaving rotoscope: restore the grounded placement we stashed.
+              const saved = r.savedTransform;
+              return {
+                ...r,
+                lockToView: false,
+                position: saved ? saved.position : r.position,
+                rotation: saved ? saved.rotation : r.rotation,
+                scale: saved ? saved.scale : r.scale,
+                savedTransform: null,
+              };
+            }),
+          }));
+        },
+        fitReferenceToMesh: (id) => {
+          const ref = get().references.find((r) => r.id === id);
+          if (!ref) return;
+          const { selectedMesh, model } = useModelStore.getState();
+          const target = selectedMesh ?? model;
+          if (!target) return;
+          const box = new THREE.Box3().setFromObject(target);
+          if (box.isEmpty()) return;
+          const size = box.getSize(new THREE.Vector3());
+          const center = box.getCenter(new THREE.Vector3());
+          // The plane's longer side is 1 unit at scale 1, so uniform scale =
+          // the mesh's largest extent makes the plane span it (aspect preserved).
+          const longest = Math.max(size.x, size.y, size.z) || 1;
+          set((state) => ({
+            references: state.references.map((r) =>
+              r.id === id
+                ? { ...r, position: [center.x, center.y, center.z], scale: [longest, longest, 1] }
+                : r
+            ),
+          }));
+        },
+        removeReference: (id) => {
+          set((state) => ({
+            references: state.references.filter((r) => r.id !== id),
+            selectedReferenceId: state.selectedReferenceId === id ? null : state.selectedReferenceId,
+          }));
+        },
+        removeAllReferences: () => set({ references: [], selectedReferenceId: null }),
+        setSelectedReferenceId: (id) => set({ selectedReferenceId: id }),
+        restoreReferences: async () => {
+          const { references } = get();
+          const restored = await Promise.all(
+            references.map(async (r) => {
+              if (!r.imageData) return { ...r, image: null, pendingAlign: null };
+              const img = new window.Image();
+              img.src = r.imageData;
+              await new Promise((resolve) => { img.onload = resolve; });
+              const aspect = r.aspect || (img.naturalHeight > 0 ? img.naturalWidth / img.naturalHeight : 1);
+              return { ...r, aspect, image: img, pendingAlign: null };
+            })
+          );
+          set({ references: restored });
+        },
+      }),
+      {
+        name: 'reference-storage',
+        storage: idbStorage as any,
+        // Persist everything except the runtime image handle and the transient
+        // align command.
+        partialize: (state) => ({
+          references: state.references.map(({ image, pendingAlign, ...rest }) => rest),
+        }),
+        onRehydrateStorage: () => (state) => {
+          if (state) {
+            state.restoreReferences();
+          }
+        },
+      }
+    ),
+    {
+      // Keep the transient align command out of undo snapshots so undo/redo never
+      // re-fires a camera realignment.
+      partialize: (state) => ({
+        references: state.references.map(({ pendingAlign, ...rest }) => rest),
+      }),
+      limit: 100,
+      handleSet: (handleSet) => debounce(handleSet as any, 250),
+      onSave: () => useHistoryStore.getState().push('reference'),
+    }
+  )
+);
+
+temporalRegistry.reference = {
+  undo: () => useReferenceStore.temporal.getState().undo(),
+  redo: () => useReferenceStore.temporal.getState().redo(),
+  clearFuture: () => useReferenceStore.temporal.setState({ futureStates: [] }),
 };
 
 /** Paint Store */

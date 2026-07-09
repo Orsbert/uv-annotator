@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { useAnnotationStore, useModelStore, useCanvasStore, usePaintStore, useOverlayStore, meshKeyOf, useHistoryStore } from '../store/combinedStores';
+import { useAnnotationStore, useModelStore, useCanvasStore, usePaintStore, useOverlayStore, useReferenceStore, meshKeyOf, useHistoryStore } from '../store/combinedStores';
 import type { Annotation } from '../types';
 
 export function useKeyboardShortcuts() {
@@ -53,11 +53,13 @@ export function useKeyboardShortcuts() {
         deleteAnnotation(selectedAnnotationId);
       }
 
-      // Escape - Deselect annotation or exit paint mode
+      // Escape - Exit paint mode, else deselect reference plane, else deselect annotation
       if (e.key === 'Escape') {
         e.preventDefault();
         if (isPaintMode) {
           setPaintMode(false);
+        } else if (useReferenceStore.getState().selectedReferenceId) {
+          useReferenceStore.getState().setSelectedReferenceId(null);
         } else {
           setSelectedAnnotationId(null);
         }
@@ -100,6 +102,16 @@ export function useKeyboardShortcuts() {
           // If any are visible, hide all; otherwise show all
           const anyVisible = overlays.some((o) => o.visible);
           overlays.forEach((o) => updateOverlay(o.id, { visible: !anyVisible }));
+        }
+      }
+
+      // B - Toggle all 3D reference-image (backdrop) visibility
+      if (e.key === 'b' || e.key === 'B') {
+        e.preventDefault();
+        const { references, updateReference } = useReferenceStore.getState();
+        if (references.length > 0) {
+          const anyVisible = references.some((r) => r.visible);
+          references.forEach((r) => updateReference(r.id, { visible: !anyVisible }));
         }
       }
 

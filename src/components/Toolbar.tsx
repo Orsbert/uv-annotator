@@ -1,8 +1,8 @@
-import { Download, Sparkles, Keyboard, Paintbrush, Check, Menu, Upload, ImagePlus, Box, Undo2, Redo2, MoreHorizontal } from 'lucide-react';
+import { Download, Sparkles, Keyboard, Paintbrush, Check, Menu, Upload, ImagePlus, Layers, Box, Undo2, Redo2, MoreHorizontal } from 'lucide-react';
 import { useModelStore, meshKeyOf, EMPTY_ANNOTATIONS, useHistoryStore } from '../store/combinedStores';
 import { useCanvasStore } from '../store/combinedStores';
 import { useAnnotationStore } from '../store/combinedStores';
-import { usePaintStore, useOverlayStore, CANVAS_SCALE_OPTIONS } from '../store/combinedStores';
+import { usePaintStore, useOverlayStore, useReferenceStore, CANVAS_SCALE_OPTIONS } from '../store/combinedStores';
 import { useSessionStore } from '../store/useSessionStore';
 import { Button } from './ui/button';
 import { generateUVLayout, computeUVFrame, applyUVFrameToTexture } from '../utils/uvGenerator';
@@ -30,6 +30,7 @@ export function Toolbar({ onToggleSidebar }: ToolbarProps) {
   const createAnnotationFromPaint = usePaintStore((state) => state.createAnnotationFromPaint);
   const paintedUVCoords = usePaintStore((state) => state.paintedUVCoords);
   const overlays = useOverlayStore((state) => state.overlays);
+  const addReference = useReferenceStore((state) => state.addReference);
   const model = useModelStore((state) => state.model);
   const modelName = useModelStore((state) => state.modelName);
 
@@ -337,6 +338,23 @@ export function Toolbar({ onToggleSidebar }: ToolbarProps) {
           Upload Model
         </Button>
 
+        {/* Toolbar-owned reference-image input so "Add reference image" works no
+            matter which panel context is showing. */}
+        <input
+          type="file"
+          id="toolbar-reference-upload"
+          accept="image/*"
+          className="hidden"
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = () => addReference(reader.result as string, file.name);
+            reader.readAsDataURL(file);
+            e.target.value = '';
+          }}
+        />
+
 
         {isPaintMode && (
           <>
@@ -410,7 +428,13 @@ export function Toolbar({ onToggleSidebar }: ToolbarProps) {
                   disabled={!uvCanvas}
                   onClick={() => { setMoreMenuOpen(false); document.getElementById('overlay-upload')?.click(); }}
                 >
-                  <ImagePlus className="h-4 w-4" /> Overlay
+                  <ImagePlus className="h-4 w-4" /> Overlay (UV canvas)
+                </button>
+                <button
+                  className="w-full flex items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  onClick={() => { setMoreMenuOpen(false); document.getElementById('toolbar-reference-upload')?.click(); }}
+                >
+                  <Layers className="h-4 w-4" /> Reference image (3D)
                 </button>
                 <button
                   className="w-full flex items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-accent disabled:opacity-50 disabled:pointer-events-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
@@ -626,8 +650,12 @@ export function Toolbar({ onToggleSidebar }: ToolbarProps) {
               <kbd className="px-2 py-1 bg-muted rounded">Esc</kbd>
             </div>
             <div className="flex justify-between gap-4">
-              <span className="text-muted-foreground">Toggle Overlay</span>
+              <span className="text-muted-foreground">Toggle Overlay (UV)</span>
               <kbd className="px-2 py-1 bg-muted rounded">T</kbd>
+            </div>
+            <div className="flex justify-between gap-4">
+              <span className="text-muted-foreground">Toggle Reference images (3D)</span>
+              <kbd className="px-2 py-1 bg-muted rounded">B</kbd>
             </div>
             <div className="flex justify-between gap-4">
               <span className="text-muted-foreground">Toggle Help</span>

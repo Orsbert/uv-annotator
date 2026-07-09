@@ -1,11 +1,12 @@
 import { useRef, useState, useEffect } from 'react';
 import { Canvas, ThreeEvent, useThree } from '@react-three/fiber';
 import { OrbitControls, Grid, Environment, TransformControls } from '@react-three/drei';
-import { useModelStore, meshKeyOf, useUiStore } from '../store/combinedStores';
+import { useModelStore, meshKeyOf, useUiStore, useReferenceStore } from '../store/combinedStores';
 import type { AxisLock } from '../store/combinedStores';
 import { useCanvasStore } from '../store/combinedStores';
 import { usePaintStore } from '../store/combinedStores';
 import { useSessionStore } from '../store/useSessionStore';
+import { ReferencePlanes } from './ReferencePlanes';
 import * as THREE from 'three';
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib';
 
@@ -78,7 +79,10 @@ function Scene() {
   const surfaceDragMode = useUiStore((state) => state.surfaceDragMode);
   const setSurfaceDragActive = useUiStore((state) => state.setSurfaceDragActive);
   const axisLock = useUiStore((state) => state.axisLock);
-  const [gizmoMode, setGizmoMode] = useState<'translate' | 'rotate' | 'scale'>('translate');
+  const gizmoMode = useUiStore((state) => state.gizmoMode);
+  // A selected reference plane takes over the gizmo; hide the mesh gizmo so the two
+  // never fight over the transform.
+  const selectedReferenceId = useReferenceStore((state) => state.selectedReferenceId);
   const { camera, gl } = useThree();
   const surfaceDragRef = useRef<{ offset: THREE.Vector3 } | null>(null);
   const surfaceRaycaster = useRef(new THREE.Raycaster());
@@ -96,9 +100,9 @@ function Scene() {
       const k = e.key.toLowerCase();
       // Mode switch — never with modifiers (Shift+S etc. is reserved for axis-plane lock)
       if (!e.shiftKey && !e.altKey) {
-        if (k === 'g') { setGizmoMode('translate'); return; }
-        if (k === 'r') { setGizmoMode('rotate'); return; }
-        if (k === 's') { setGizmoMode('scale'); return; }
+        if (k === 'g') { useUiStore.getState().setGizmoMode('translate'); return; }
+        if (k === 'r') { useUiStore.getState().setGizmoMode('rotate'); return; }
+        if (k === 's') { useUiStore.getState().setGizmoMode('scale'); return; }
       }
       if (k === 'x' || k === 'y' || k === 'z') {
         const axis = k as 'x' | 'y' | 'z';
@@ -336,6 +340,8 @@ function Scene() {
       if (e.object instanceof THREE.Mesh) {
         console.log('Setting selected mesh:', e.object.name);
         setSelectedMesh(e.object);
+        // Hand the gizmo back to the mesh if a reference plane had it.
+        useReferenceStore.getState().setSelectedReferenceId(null);
       }
     }
   };
@@ -394,7 +400,7 @@ function Scene() {
         fadeDistance={30} 
       />
       
-      {selectedMesh && !isPaintMode && !surfaceDragMode && (
+      {selectedMesh && !isPaintMode && !surfaceDragMode && !selectedReferenceId && (
         <TransformControls
           object={selectedMesh}
           mode={gizmoMode}
@@ -404,6 +410,8 @@ function Scene() {
           onMouseUp={commitGizmoTransform}
         />
       )}
+
+      <ReferencePlanes />
 
       <CameraController />
       <Environment preset="studio" environmentIntensity={0.4} />

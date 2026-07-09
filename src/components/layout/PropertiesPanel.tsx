@@ -1,6 +1,7 @@
 import { Box } from 'lucide-react';
 import { useAnnotationStore, useModelStore, meshKeyOf, EMPTY_ANNOTATIONS } from '../../store/combinedStores';
 import { OverlayControls } from './OverlayControls';
+import { ReferenceControls } from './ReferenceControls';
 import { BackgroundTextureControls } from './BackgroundTextureControls';
 import { MeshControls } from './MeshControls';
 import { RegionProperties } from './RegionProperties';
@@ -34,11 +35,15 @@ export function PropertiesPanel() {
       ) : selectedMesh ? (
         <MeshView meshName={selectedMesh.name} />
       ) : (
-        <div className="flex h-full flex-col items-center justify-center gap-2 px-6 text-center">
-          <p className="text-sm text-muted-foreground">Nothing selected</p>
-          <p className="text-xs text-muted-foreground/70">
-            Pick a mesh from the list, or draw a region on the UV map.
-          </p>
+        <div className="py-2">
+          <div className="flex flex-col items-center justify-center gap-2 px-6 py-10 text-center">
+            <p className="text-sm text-muted-foreground">Nothing selected</p>
+            <p className="text-xs text-muted-foreground/70">
+              Pick a mesh from the list, or draw a region on the UV map.
+            </p>
+          </div>
+          {/* Reference images are scene-global, so keep them reachable here too. */}
+          <ReferenceControls />
         </div>
       )}
     </div>
@@ -58,6 +63,7 @@ function MeshView({ meshName }: { meshName: string }) {
       <MeshControls />
       <BackgroundTextureControls />
       <OverlayControls />
+      <ReferenceControls />
     </div>
   );
 }
