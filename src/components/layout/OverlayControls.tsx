@@ -1,10 +1,10 @@
-import { useState } from 'react';
-import { ChevronDown, ChevronRight, Eye, EyeOff, Trash2, Link2, Unlink, Move, Maximize, ImagePlus } from 'lucide-react';
+import { Eye, EyeOff, Trash2, Link2, Unlink, Move, Maximize, ImagePlus } from 'lucide-react';
 import { useOverlayStore } from '../../store/combinedStores';
 import type { OverlayItem } from '../../store/combinedStores';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { Label } from '../ui/label';
+import { PropertySection } from '../ui/property-section';
 
 function OverlayItemControls({ overlay }: { overlay: OverlayItem }) {
   const updateOverlay = useOverlayStore((state) => state.updateOverlay);
@@ -196,8 +196,6 @@ export function OverlayControls() {
   const addOverlay = useOverlayStore((state) => state.addOverlay);
   const removeAllOverlays = useOverlayStore((state) => state.removeAllOverlays);
 
-  const [overlayOpen, setOverlayOpen] = useState(true);
-
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -214,60 +212,54 @@ export function OverlayControls() {
   };
 
   return (
-    <div className="border-b">
-      <button
-        className="w-full flex items-center gap-2 p-3 hover:bg-accent/50 text-sm font-semibold"
-        onClick={() => setOverlayOpen(!overlayOpen)}
-      >
-        {overlayOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-        Template Overlays
-        {overlays.length > 0 && (
-          <span className="ml-auto text-xs text-muted-foreground">{overlays.length}</span>
+    <PropertySection
+      title="Overlays"
+      defaultOpen={false}
+      dot={overlays.length > 0}
+      trailing={
+        overlays.length > 0 ? (
+          <span className="text-xs text-muted-foreground">{overlays.length}</span>
+        ) : undefined
+      }
+    >
+      {/* Add overlay button */}
+      <div className="flex items-center gap-2">
+        <input
+          type="file"
+          id="overlay-upload"
+          accept="image/*"
+          className="hidden"
+          onChange={handleFileUpload}
+        />
+        <Button
+          size="sm"
+          variant="outline"
+          className="flex-1"
+          onClick={() => document.getElementById('overlay-upload')?.click()}
+        >
+          <ImagePlus className="mr-2 h-3 w-3" />
+          Add Overlay
+        </Button>
+        {overlays.length > 1 && (
+          <Button
+            size="sm"
+            variant="ghost"
+            className="text-destructive hover:text-destructive"
+            onClick={removeAllOverlays}
+            title="Remove all overlays"
+          >
+            <Trash2 className="h-3 w-3" />
+          </Button>
         )}
-      </button>
+      </div>
 
-      {overlayOpen && (
-        <div className="p-3 space-y-2">
-          {/* Add overlay button */}
-          <div className="flex items-center gap-2">
-            <input
-              type="file"
-              id="overlay-upload"
-              accept="image/*"
-              className="hidden"
-              onChange={handleFileUpload}
-            />
-            <Button
-              size="sm"
-              variant="outline"
-              className="flex-1"
-              onClick={() => document.getElementById('overlay-upload')?.click()}
-            >
-              <ImagePlus className="mr-2 h-3 w-3" />
-              Add Overlay
-            </Button>
-            {overlays.length > 1 && (
-              <Button
-                size="sm"
-                variant="ghost"
-                className="text-destructive hover:text-destructive"
-                onClick={removeAllOverlays}
-                title="Remove all overlays"
-              >
-                <Trash2 className="h-3 w-3" />
-              </Button>
-            )}
-          </div>
-
-          {/* Overlay list */}
-          {overlays.length === 0 && (
-            <p className="text-xs text-muted-foreground text-center py-2">No overlays added</p>
-          )}
-          {overlays.map((overlay) => (
-            <OverlayItemControls key={overlay.id} overlay={overlay} />
-          ))}
-        </div>
+      {/* Overlay list */}
+      {overlays.length === 0 && (
+        <p className="text-xs text-muted-foreground text-center py-2">No overlays added</p>
       )}
-    </div>
+      {overlays.map((overlay) => (
+        <OverlayItemControls key={overlay.id} overlay={overlay} />
+      ))}
+    </PropertySection>
   );
 }
