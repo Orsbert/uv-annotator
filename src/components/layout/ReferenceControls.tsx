@@ -1,6 +1,8 @@
-import { Eye, EyeOff, Trash2, ImagePlus, Camera, Pin, Layers, Maximize } from 'lucide-react';
+import { Eye, EyeOff, Trash2, ImagePlus, Camera, Pin, Layers, Maximize, Square, Download } from 'lucide-react';
 import { useReferenceStore, useModelStore } from '../../store/combinedStores';
 import type { ReferenceItem, AlignCommand } from '../../store/combinedStores';
+import { getColorTheme } from '../../types';
+import { buildProofCanvas } from '../../utils/boxGraphics';
 import { Button } from '../ui/button';
 import { Label } from '../ui/label';
 import { NumberField } from '../ui/number-field';
@@ -64,6 +66,9 @@ function ReferenceItemControls({ reference }: { reference: ReferenceItem }) {
   const updateReference = useReferenceStore((s) => s.updateReference);
   const setLockToView = useReferenceStore((s) => s.setLockToView);
   const fitReferenceToMesh = useReferenceStore((s) => s.fitReferenceToMesh);
+  const setDrawBoxes = useReferenceStore((s) => s.setDrawBoxes);
+  const updateBox = useReferenceStore((s) => s.updateBox);
+  const removeBox = useReferenceStore((s) => s.removeBox);
   const removeReference = useReferenceStore((s) => s.removeReference);
   const selectedId = useReferenceStore((s) => s.selectedReferenceId);
   const setSelectedReferenceId = useReferenceStore((s) => s.setSelectedReferenceId);
@@ -72,7 +77,20 @@ function ReferenceItemControls({ reference }: { reference: ReferenceItem }) {
   const fitTarget = selectedMesh?.name || (hasModel ? 'model' : null);
 
   const isExpanded = selectedId === reference.id;
-  const { position, rotation, scale, lockToView } = reference;
+  const { position, rotation, scale, lockToView, boxes, drawBoxes } = reference;
+
+  const exportProof = () => {
+    if (!reference.image) return;
+    buildProofCanvas(reference.image, boxes).toBlob((blob) => {
+      if (!blob) return;
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${reference.imageName.replace(/\.[^.]+$/, '')}-boxes.png`;
+      a.click();
+      URL.revokeObjectURL(url);
+    });
+  };
 
   const setPos = (a: 0 | 1 | 2, v: number) => {
     const n: [number, number, number] = [...position];
@@ -125,6 +143,79 @@ function ReferenceItemControls({ reference }: { reference: ReferenceItem }) {
 
       {isExpanded && (
         <div className="space-y-3 pt-1">
+          {/* Bounding boxes — draw on the plane, project onto the mesh */}
+          <div className="space-y-1.5">
+            <div className="flex items-center gap-1">
+              <Button
+                size="sm"
+                variant={drawBoxes ? 'default' : 'outline'}
+                className="flex-1"
+                disabled={lockToView}
+                onClick={() => setDrawBoxes(reference.id, !drawBoxes)}
+                title={lockToView ? 'Turn off Lock to view to draw boxes' : 'Draw bounding boxes on this plane'}
+              >
+                <Square className="mr-2 h-3 w-3" />
+                {drawBoxes ? 'Drawing… (click to stop)' : 'Draw boxes'}
+              </Button>
+              <Button
+                size="icon"
+                variant="outline"
+                className="h-8 w-8"
+                disabled={!reference.image || boxes.length === 0}
+                onClick={exportProof}
+                title="Export the flat image + boxes as a PNG — the 2D proof"
+              >
+                <Download className="h-3 w-3" />
+              </Button>
+            </div>
+            {drawBoxes && (
+              <p className="text-[10px] text-muted-foreground">
+                Drag on the plane in 3D. Each box projects onto{' '}
+                <span className="text-foreground">{selectedMesh?.name || 'the selected mesh'}</span>.
+              </p>
+            )}
+            {lockToView && (
+              <p className="text-[10px] text-muted-foreground">
+                Boxes project from a grounded plane — turn off Lock to view.
+              </p>
+            )}
+            {boxes.length > 0 && (
+              <div className="space-y-0.5">
+                {boxes.map((b) => (
+                  <div
+                    key={b.id}
+                    className="flex items-center gap-1.5 rounded px-1 py-0.5 text-xs hover:bg-accent/50"
+                  >
+                    <span
+                      className="h-2.5 w-2.5 shrink-0 rounded-sm"
+                      style={{ backgroundColor: getColorTheme(b.color).main }}
+                    />
+                    <span className="flex-1 truncate">{b.label}</span>
+                    {!b.meshKey && (
+                      <span className="text-[9px] text-muted-foreground" title="No mesh was under this box when drawn">
+                        no mesh
+                      </span>
+                    )}
+                    <button
+                      className="text-muted-foreground hover:text-foreground"
+                      onClick={() => updateBox(reference.id, b.id, { visible: !b.visible })}
+                      title={b.visible ? 'Hide' : 'Show'}
+                    >
+                      {b.visible ? <Eye className="h-3 w-3" /> : <EyeOff className="h-3 w-3" />}
+                    </button>
+                    <button
+                      className="text-destructive/80 hover:text-destructive"
+                      onClick={() => removeBox(reference.id, b.id)}
+                      title="Delete box"
+                    >
+                      <Trash2 className="h-3 w-3" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
           {/* Mode toggles */}
           <div className="space-y-1.5">
             <label className="flex cursor-pointer items-center gap-2 text-xs">
@@ -316,7 +407,8 @@ export function ReferenceControls() {
 
       {references.length === 0 && (
         <p className="py-2 text-center text-xs text-muted-foreground">
-          Trace a photo or blueprint on a plane in the 3D view.
+          Put a photo/blueprint on a plane in 3D, draw boxes on it, and they project
+          onto the model — so the 2D and 3D match on curved parts.
         </p>
       )}
       {references.map((reference) => (

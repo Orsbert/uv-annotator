@@ -7,6 +7,7 @@ import { useCanvasStore } from '../store/combinedStores';
 import { usePaintStore } from '../store/combinedStores';
 import { useSessionStore } from '../store/useSessionStore';
 import { ReferencePlanes } from './ReferencePlanes';
+import { ProjectedBoxDecals } from './ProjectedBoxDecals';
 import * as THREE from 'three';
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib';
 
@@ -412,6 +413,7 @@ function Scene() {
       )}
 
       <ReferencePlanes />
+      <ProjectedBoxDecals />
 
       <CameraController />
       <Environment preset="studio" environmentIntensity={0.4} />

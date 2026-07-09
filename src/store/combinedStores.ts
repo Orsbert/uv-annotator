@@ -734,6 +734,24 @@ temporalRegistry.overlay = {
  * or pin to the camera as a rotoscope backdrop. */
 export type AlignCommand = 'camera' | 'front' | 'side' | 'top';
 
+/** A bounding box drawn on a reference plane. Its rect is stored in the plane's
+ * own UV space (0..1, origin bottom-left, v up — matching PlaneGeometry UVs) so it
+ * is independent of the plane's world transform. It renders two ways: flat on the
+ * plane (the 2D proof) and projected onto `meshKey`'s surface as a decal (the 3D).
+ * Because both come from the same planar projection, they line up on curved parts —
+ * unlike UV-space annotations, which stretch. */
+export interface ProjectedBox {
+  id: string;
+  label: string;
+  color: string;   // ANNOTATION_COLORS name
+  u: number;       // rect min-corner, plane UV
+  v: number;
+  w: number;       // rect size, plane UV
+  h: number;
+  meshKey: string; // mesh the box projects onto (bound when drawn); '' = none yet
+  visible: boolean;
+}
+
 export interface ReferenceItem {
   id: string;
   imageData: string;               // data URL (persisted)
@@ -746,6 +764,8 @@ export interface ReferenceItem {
   scale: [number, number, number];    // z is always 1 (a plane)
   showOnTop: boolean;              // X-ray: draw over the part regardless of depth
   lockToView: boolean;            // rotoscope: pin to the camera each frame
+  boxes: ProjectedBox[];          // bounding boxes drawn on this plane
+  drawBoxes?: boolean;            // transient: draw-a-box mode is active on this plane
   // Grounded transform stashed on entering lock-to-view, restored on exit — so each
   // mode remembers its own placement instead of reinterpreting the same numbers.
   savedTransform?: {
@@ -770,6 +790,14 @@ export interface ReferenceState {
   // One-click size + center the plane onto the selected mesh (or whole model if none),
   // the 3D analog of the 2D overlay's fitOverlayToCanvas.
   fitReferenceToMesh: (id: string) => void;
+  // Draw-a-box mode. Enabling one plane disables it on the others (one active
+  // drawing surface at a time) and selects it.
+  setDrawBoxes: (id: string, value: boolean) => void;
+  // Append a box (plane-UV rect). Auto-labels b1, b2… and cycles colors. Binds the
+  // box to the currently selected mesh so it projects there.
+  addBox: (referenceId: string, rect: { u: number; v: number; w: number; h: number }) => void;
+  updateBox: (referenceId: string, boxId: string, updates: Partial<Omit<ProjectedBox, 'id'>>) => void;
+  removeBox: (referenceId: string, boxId: string) => void;
   removeReference: (id: string) => void;
   removeAllReferences: () => void;
   setSelectedReferenceId: (id: string | null) => void;
@@ -803,6 +831,8 @@ export const useReferenceStore = create<ReferenceState>()(
                   scale: [1.5, 1.5, 1],
                   showOnTop: true,
                   lockToView: false,
+                  boxes: [],
+                  drawBoxes: false,
                   image: img,
                   // Face the camera on drop so it appears in front of the user
                   // instead of edge-on at the origin.
@@ -868,6 +898,53 @@ export const useReferenceStore = create<ReferenceState>()(
             ),
           }));
         },
+        setDrawBoxes: (id, value) => {
+          set((state) => ({
+            // One active drawing surface at a time.
+            references: state.references.map((r) => ({
+              ...r,
+              drawBoxes: r.id === id ? value : false,
+            })),
+            selectedReferenceId: value ? id : state.selectedReferenceId,
+          }));
+        },
+        addBox: (referenceId, rect) => {
+          set((state) => ({
+            references: state.references.map((r) => {
+              if (r.id !== referenceId) return r;
+              const n = r.boxes.length;
+              const color = ANNOTATION_COLORS[n % ANNOTATION_COLORS.length].name;
+              const box: ProjectedBox = {
+                id: `pbox-${Date.now()}`,
+                label: `b${n + 1}`,
+                color,
+                u: rect.u,
+                v: rect.v,
+                w: rect.w,
+                h: rect.h,
+                meshKey: meshKeyOf(useModelStore.getState().selectedMesh),
+                visible: true,
+              };
+              return { ...r, boxes: [...r.boxes, box] };
+            }),
+          }));
+        },
+        updateBox: (referenceId, boxId, updates) => {
+          set((state) => ({
+            references: state.references.map((r) =>
+              r.id === referenceId
+                ? { ...r, boxes: r.boxes.map((b) => (b.id === boxId ? { ...b, ...updates } : b)) }
+                : r
+            ),
+          }));
+        },
+        removeBox: (referenceId, boxId) => {
+          set((state) => ({
+            references: state.references.map((r) =>
+              r.id === referenceId ? { ...r, boxes: r.boxes.filter((b) => b.id !== boxId) } : r
+            ),
+          }));
+        },
         removeReference: (id) => {
           set((state) => ({
             references: state.references.filter((r) => r.id !== id),
@@ -880,12 +957,13 @@ export const useReferenceStore = create<ReferenceState>()(
           const { references } = get();
           const restored = await Promise.all(
             references.map(async (r) => {
-              if (!r.imageData) return { ...r, image: null, pendingAlign: null };
+              const boxes = r.boxes ?? [];
+              if (!r.imageData) return { ...r, boxes, drawBoxes: false, image: null, pendingAlign: null };
               const img = new window.Image();
               img.src = r.imageData;
               await new Promise((resolve) => { img.onload = resolve; });
               const aspect = r.aspect || (img.naturalHeight > 0 ? img.naturalWidth / img.naturalHeight : 1);
-              return { ...r, aspect, image: img, pendingAlign: null };
+              return { ...r, aspect, boxes, drawBoxes: false, image: img, pendingAlign: null };
             })
           );
           set({ references: restored });
@@ -895,9 +973,9 @@ export const useReferenceStore = create<ReferenceState>()(
         name: 'reference-storage',
         storage: idbStorage as any,
         // Persist everything except the runtime image handle and the transient
-        // align command.
+        // align command / draw mode.
         partialize: (state) => ({
-          references: state.references.map(({ image, pendingAlign, ...rest }) => rest),
+          references: state.references.map(({ image, pendingAlign, drawBoxes, ...rest }) => rest),
         }),
         onRehydrateStorage: () => (state) => {
           if (state) {
@@ -907,10 +985,10 @@ export const useReferenceStore = create<ReferenceState>()(
       }
     ),
     {
-      // Keep the transient align command out of undo snapshots so undo/redo never
-      // re-fires a camera realignment.
+      // Keep transient fields (align command, draw mode) out of undo snapshots so
+      // undo/redo never re-fires a realignment or toggles the drawing mode.
       partialize: (state) => ({
-        references: state.references.map(({ pendingAlign, ...rest }) => rest),
+        references: state.references.map(({ pendingAlign, drawBoxes, ...rest }) => rest),
       }),
       limit: 100,
       handleSet: (handleSet) => debounce(handleSet as any, 250),

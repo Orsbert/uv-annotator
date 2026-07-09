@@ -53,13 +53,17 @@ export function useKeyboardShortcuts() {
         deleteAnnotation(selectedAnnotationId);
       }
 
-      // Escape - Exit paint mode, else deselect reference plane, else deselect annotation
+      // Escape - Exit box-draw mode, else paint mode, else deselect reference, else annotation
       if (e.key === 'Escape') {
         e.preventDefault();
-        if (isPaintMode) {
+        const refState = useReferenceStore.getState();
+        const drawing = refState.references.find((r) => r.drawBoxes);
+        if (drawing) {
+          refState.setDrawBoxes(drawing.id, false);
+        } else if (isPaintMode) {
           setPaintMode(false);
-        } else if (useReferenceStore.getState().selectedReferenceId) {
-          useReferenceStore.getState().setSelectedReferenceId(null);
+        } else if (refState.selectedReferenceId) {
+          refState.setSelectedReferenceId(null);
         } else {
           setSelectedAnnotationId(null);
         }

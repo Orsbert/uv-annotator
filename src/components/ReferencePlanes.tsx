@@ -1,9 +1,11 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useThree, useFrame, type ThreeEvent } from '@react-three/fiber';
 import { TransformControls } from '@react-three/drei';
 import * as THREE from 'three';
 import { useReferenceStore, useUiStore, usePaintStore } from '../store/combinedStores';
 import type { ReferenceItem } from '../store/combinedStores';
+import { ANNOTATION_COLORS } from '../types';
+import { drawBoxGraphic, boxRectToCanvas } from '../utils/boxGraphics';
 
 // How far in front of the camera a "lock to view" / freshly camera-aligned plane sits.
 const VIEW_DISTANCE = 3;
@@ -21,30 +23,69 @@ function planeSize(aspect: number): [number, number] {
   return aspect >= 1 ? [1, 1 / aspect] : [aspect, 1];
 }
 
+// A box mid-draw — same shape the composite texture expects, plus color/label so the
+// live preview matches the committed box.
+type Draft = { u: number; v: number; w: number; h: number; color: string; label: string };
+
 function ReferencePlane({ reference }: { reference: ReferenceItem }) {
-  const { camera } = useThree();
+  const { camera, gl } = useThree();
   const updateReference = useReferenceStore((s) => s.updateReference);
+  const addBox = useReferenceStore((s) => s.addBox);
   const selectedId = useReferenceStore((s) => s.selectedReferenceId);
   const setSelectedReferenceId = useReferenceStore((s) => s.setSelectedReferenceId);
   const isPaintMode = usePaintStore((s) => s.isPaintMode);
   const gizmoMode = useUiStore((s) => s.gizmoMode);
   const axisLock = useUiStore((s) => s.axisLock);
+  const setSurfaceDragActive = useUiStore((s) => s.setSurfaceDragActive);
 
   const [obj, setObj] = useState<THREE.Mesh | null>(null);
+  const [draft, setDraftState] = useState<Draft | null>(null);
+  const draftRef = useRef<Draft | null>(null);
+  const setDraft = (d: Draft | null) => {
+    draftRef.current = d;
+    setDraftState(d);
+  };
   const isSelected = selectedId === reference.id;
 
-  const texture = useMemo(() => {
-    if (!reference.image) return null;
-    const t = new THREE.Texture(reference.image);
+  const { image, boxes, aspect, position, rotation, scale, lockToView, drawBoxes } = reference;
+
+  // One canvas + CanvasTexture per plane, drawn with the image and its boxes. This
+  // composite is both what shows on the plane and the flat 2D proof for export.
+  const { texture, canvas } = useMemo(() => {
+    const c = document.createElement('canvas');
+    c.width = 1;
+    c.height = 1;
+    const t = new THREE.CanvasTexture(c);
     t.colorSpace = THREE.SRGBColorSpace;
-    t.needsUpdate = true;
-    return t;
-  }, [reference.image]);
+    return { texture: t, canvas: c };
+  }, []);
 
-  useEffect(() => () => texture?.dispose(), [texture]);
+  useEffect(() => () => texture.dispose(), [texture]);
 
-  const [pw, ph] = planeSize(reference.aspect);
-  const { position, rotation, scale, lockToView } = reference;
+  // Redraw the composite whenever the image, the boxes, or the in-progress draft change.
+  useEffect(() => {
+    if (!image) return;
+    const W = image.naturalWidth || 1024;
+    const H = image.naturalHeight || 1024;
+    if (canvas.width !== W) canvas.width = W;
+    if (canvas.height !== H) canvas.height = H;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    ctx.clearRect(0, 0, W, H);
+    ctx.drawImage(image, 0, 0, W, H);
+    for (const b of boxes) {
+      if (!b.visible) continue;
+      const r = boxRectToCanvas(b, W, H);
+      drawBoxGraphic(ctx, r.x, r.y, r.w, r.h, b.color, b.label);
+    }
+    if (draft) {
+      const r = boxRectToCanvas(draft, W, H);
+      drawBoxGraphic(ctx, r.x, r.y, r.w, r.h, draft.color, draft.label);
+    }
+    texture.needsUpdate = true;
+  }, [image, boxes, draft, canvas, texture]);
+
+  const [pw, ph] = planeSize(aspect);
 
   // Grounded: mirror the stored transform onto the object. Skipped while pinned to
   // the view (useFrame drives it) and dormant during a gizmo drag (no store change
@@ -102,15 +143,89 @@ function ReferencePlane({ reference }: { reference: ReferenceItem }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [obj, reference.pendingAlign]);
 
-  if (!reference.visible || !texture) return null;
+  // Draw-a-box mode: intercept canvas drags in the capture phase (so OrbitControls
+  // never sees them), raycast this plane directly — ignoring whatever occludes it —
+  // and build a rect in the plane's own UV space.
+  useEffect(() => {
+    if (!drawBoxes || !obj) return;
+    const el = gl.domElement;
+    const raycaster = new THREE.Raycaster();
+    let start: THREE.Vector2 | null = null;
 
-  // A lock-to-view plane and a paint-mode plane must never intercept pointer events.
+    const nextIdx = boxes.length;
+    const color = ANNOTATION_COLORS[nextIdx % ANNOTATION_COLORS.length].name;
+    const label = `b${nextIdx + 1}`;
+
+    const uvAt = (clientX: number, clientY: number): THREE.Vector2 | null => {
+      const rect = el.getBoundingClientRect();
+      if (clientX < rect.left || clientX > rect.right || clientY < rect.top || clientY > rect.bottom) return null;
+      const ndc = new THREE.Vector2(
+        ((clientX - rect.left) / rect.width) * 2 - 1,
+        -((clientY - rect.top) / rect.height) * 2 + 1
+      );
+      raycaster.setFromCamera(ndc, camera);
+      const hits: THREE.Intersection[] = [];
+      defaultRaycast.call(obj, raycaster, hits); // ignore obj.raycast (may be noop)
+      const uv = hits[0]?.uv;
+      return uv ? new THREE.Vector2(uv.x, uv.y) : null;
+    };
+
+    const onMove = (e: PointerEvent) => {
+      if (!start) return;
+      const uv = uvAt(e.clientX, e.clientY);
+      if (!uv) return;
+      setDraft({
+        u: Math.min(start.x, uv.x),
+        v: Math.min(start.y, uv.y),
+        w: Math.abs(uv.x - start.x),
+        h: Math.abs(uv.y - start.y),
+        color,
+        label,
+      });
+    };
+    const onUp = () => {
+      window.removeEventListener('pointermove', onMove, true);
+      window.removeEventListener('pointerup', onUp, true);
+      setSurfaceDragActive(false);
+      const d = draftRef.current;
+      start = null;
+      setDraft(null);
+      if (d && d.w > 0.01 && d.h > 0.01) {
+        addBox(reference.id, { u: d.u, v: d.v, w: d.w, h: d.h });
+      }
+    };
+    const onDown = (e: PointerEvent) => {
+      if (e.button !== 0) return;
+      const uv = uvAt(e.clientX, e.clientY);
+      if (!uv) return; // not over the plane — let orbit / UI have the event
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      start = uv;
+      setSurfaceDragActive(true);
+      setDraft({ u: uv.x, v: uv.y, w: 0, h: 0, color, label });
+      window.addEventListener('pointermove', onMove, true);
+      window.addEventListener('pointerup', onUp, true);
+    };
+
+    window.addEventListener('pointerdown', onDown, true);
+    return () => {
+      window.removeEventListener('pointerdown', onDown, true);
+      window.removeEventListener('pointermove', onMove, true);
+      window.removeEventListener('pointerup', onUp, true);
+      setSurfaceDragActive(false);
+    };
+  }, [drawBoxes, obj, boxes.length, gl, camera, addBox, reference.id, setSurfaceDragActive]);
+
+  if (!reference.visible || !image) return null;
+
+  // Lock-to-view / paint-mode planes must never intercept r3f pointer events. (Draw
+  // mode uses its own capture-phase handler above, not r3f events.)
   const clickThrough = isPaintMode || lockToView;
-  // Draw over the part (ignore depth) when in X-ray or when acting as a view backdrop.
+  // Draw over the part (ignore depth) when in X-ray or acting as a view backdrop.
   const onTop = reference.showOnTop || lockToView;
 
   const handleClick = (e: ThreeEvent<MouseEvent>) => {
-    if (clickThrough) return;
+    if (clickThrough || drawBoxes) return;
     e.stopPropagation();
     setSelectedReferenceId(reference.id);
   };
@@ -128,7 +243,7 @@ function ReferencePlane({ reference }: { reference: ReferenceItem }) {
     });
   };
 
-  const showGizmo = isSelected && !lockToView && !isPaintMode;
+  const showGizmo = isSelected && !lockToView && !isPaintMode && !drawBoxes;
 
   return (
     <>
