@@ -22,6 +22,12 @@ export interface Annotation {
   imageAlign?: ImageAlign;
   imageOpacity?: number;
   /**
+   * Per-side inset applied to the decal image, as a fraction of the box's
+   * shorter side, so the art sits with a margin instead of running edge-to-edge.
+   * Absent = no padding.
+   */
+  imagePadding?: { top: number; right: number; bottom: number; left: number };
+  /**
    * The mesh UV frame this annotation was authored against (see uvGenerator).
    * Absent on annotations created before the UV-frame fix; used to detect ones
    * that may be mispositioned on out-of-range-UV meshes.
@@ -38,34 +44,50 @@ export function computeImageRect(
   imgW: number,
   imgH: number,
   fit: ImageFit = 'contain',
-  align: ImageAlign = 'center'
+  align: ImageAlign = 'center',
+  padding?: { top: number; right: number; bottom: number; left: number }
 ): { sx: number; sy: number; sw: number; sh: number; dx: number; dy: number; dw: number; dh: number } {
+  // Inset the box by the padding (a fraction of the box's shorter side, so the
+  // margin looks even on non-square boxes) and fit/align the art into that inner
+  // rect. Everything downstream draws into `inner`, which stays within the box.
+  const ref = Math.min(box.width, box.height);
+  const pl = (padding?.left ?? 0) * ref;
+  const pr = (padding?.right ?? 0) * ref;
+  const pt = (padding?.top ?? 0) * ref;
+  const pb = (padding?.bottom ?? 0) * ref;
+  const inner = {
+    x: box.x + pl,
+    y: box.y + pt,
+    width: Math.max(1, box.width - pl - pr),
+    height: Math.max(1, box.height - pt - pb),
+  };
+
   if (imgW <= 0 || imgH <= 0) {
-    return { sx: 0, sy: 0, sw: imgW, sh: imgH, dx: box.x, dy: box.y, dw: box.width, dh: box.height };
+    return { sx: 0, sy: 0, sw: imgW, sh: imgH, dx: inner.x, dy: inner.y, dw: inner.width, dh: inner.height };
   }
 
   const [hAlign, vAlign] = parseAlign(align);
 
   if (fit === 'fill') {
-    return { sx: 0, sy: 0, sw: imgW, sh: imgH, dx: box.x, dy: box.y, dw: box.width, dh: box.height };
+    return { sx: 0, sy: 0, sw: imgW, sh: imgH, dx: inner.x, dy: inner.y, dw: inner.width, dh: inner.height };
   }
 
   if (fit === 'contain') {
-    const scale = Math.min(box.width / imgW, box.height / imgH);
+    const scale = Math.min(inner.width / imgW, inner.height / imgH);
     const dw = imgW * scale;
     const dh = imgH * scale;
-    const dx = box.x + alignOffset(box.width - dw, hAlign);
-    const dy = box.y + alignOffset(box.height - dh, vAlign);
+    const dx = inner.x + alignOffset(inner.width - dw, hAlign);
+    const dy = inner.y + alignOffset(inner.height - dh, vAlign);
     return { sx: 0, sy: 0, sw: imgW, sh: imgH, dx, dy, dw, dh };
   }
 
-  // cover: fill the box; crop overflow on the image (source rect)
-  const scale = Math.max(box.width / imgW, box.height / imgH);
-  const sw = box.width / scale;
-  const sh = box.height / scale;
+  // cover: fill the inner rect; crop overflow on the image (source rect)
+  const scale = Math.max(inner.width / imgW, inner.height / imgH);
+  const sw = inner.width / scale;
+  const sh = inner.height / scale;
   const sx = alignOffset(imgW - sw, hAlign);
   const sy = alignOffset(imgH - sh, vAlign);
-  return { sx, sy, sw, sh, dx: box.x, dy: box.y, dw: box.width, dh: box.height };
+  return { sx, sy, sw, sh, dx: inner.x, dy: inner.y, dw: inner.width, dh: inner.height };
 }
 
 function parseAlign(align: ImageAlign): ['left' | 'center' | 'right', 'top' | 'center' | 'bottom'] {

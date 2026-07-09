@@ -6,9 +6,11 @@ import { getColorTheme } from '../../types';
 import { Input } from '../ui/input';
 import { Label } from '../ui/label';
 import { Button } from '../ui/button';
+import { NumberField } from '../ui/number-field';
 import { OverlayControls } from './OverlayControls';
 import { BackgroundTextureControls } from './BackgroundTextureControls';
 import { MeshControls } from './MeshControls';
+import { ImagePaddingControl } from './ImagePaddingControl';
 
 const ALIGN_GRID: ImageAlign[][] = [
   ['top-left', 'top-center', 'top-right'],
@@ -29,12 +31,9 @@ export function PropertiesPanel() {
   const [annotationOpen, setAnnotationOpen] = useState(true);
   const [imageOpen, setImageOpen] = useState(false);
 
-  const handleNumberChange = (field: string, value: string) => {
+  const commitField = (field: 'x' | 'y' | 'width' | 'height' | 'rotation', value: number) => {
     if (!selectedAnnotationId) return;
-    const num = parseFloat(value);
-    if (!isNaN(num)) {
-      updateAnnotation(selectedAnnotationId, { [field]: num });
-    }
+    updateAnnotation(selectedAnnotationId, { [field]: value });
   };
 
   const handleLabelChange = (value: string) => {
@@ -105,20 +104,20 @@ export function PropertiesPanel() {
                   <div className="grid grid-cols-2 gap-2">
                     <div className="flex items-center gap-1">
                       <span className="text-xs w-4">X</span>
-                      <Input
-                        type="number"
-                        value={selectedAnnotation.x.toFixed(1)}
-                        onChange={(e) => handleNumberChange('x', e.target.value)}
+                      <NumberField
+                        value={selectedAnnotation.x}
+                        onCommit={(n) => commitField('x', n)}
                         className="h-7 text-xs"
+                        aria-label="X"
                       />
                     </div>
                     <div className="flex items-center gap-1">
                       <span className="text-xs w-4">Y</span>
-                      <Input
-                        type="number"
-                        value={selectedAnnotation.y.toFixed(1)}
-                        onChange={(e) => handleNumberChange('y', e.target.value)}
+                      <NumberField
+                        value={selectedAnnotation.y}
+                        onCommit={(n) => commitField('y', n)}
                         className="h-7 text-xs"
+                        aria-label="Y"
                       />
                     </div>
                   </div>
@@ -130,20 +129,20 @@ export function PropertiesPanel() {
                   <div className="grid grid-cols-2 gap-2">
                     <div className="flex items-center gap-1">
                       <span className="text-xs w-4">W</span>
-                      <Input
-                        type="number"
-                        value={selectedAnnotation.width.toFixed(1)}
-                        onChange={(e) => handleNumberChange('width', e.target.value)}
+                      <NumberField
+                        value={selectedAnnotation.width}
+                        onCommit={(n) => commitField('width', n)}
                         className="h-7 text-xs"
+                        aria-label="Width"
                       />
                     </div>
                     <div className="flex items-center gap-1">
                       <span className="text-xs w-4">H</span>
-                      <Input
-                        type="number"
-                        value={selectedAnnotation.height.toFixed(1)}
-                        onChange={(e) => handleNumberChange('height', e.target.value)}
+                      <NumberField
+                        value={selectedAnnotation.height}
+                        onCommit={(n) => commitField('height', n)}
                         className="h-7 text-xs"
+                        aria-label="Height"
                       />
                     </div>
                   </div>
@@ -154,11 +153,11 @@ export function PropertiesPanel() {
                   <Label className="text-xs text-muted-foreground mb-2 block">Rotation</Label>
                   <div className="flex items-center gap-1">
                     <span className="text-xs w-4">R</span>
-                    <Input
-                      type="number"
-                      value={selectedAnnotation.rotation.toFixed(1)}
-                      onChange={(e) => handleNumberChange('rotation', e.target.value)}
+                    <NumberField
+                      value={selectedAnnotation.rotation}
+                      onCommit={(n) => commitField('rotation', n)}
                       className="h-7 text-xs"
+                      aria-label="Rotation"
                     />
                     <span className="text-xs">°</span>
                   </div>
@@ -303,6 +302,12 @@ export function PropertiesPanel() {
                         })}
                       </div>
                     </div>
+
+                    <ImagePaddingControl
+                      key={selectedAnnotation.id}
+                      value={selectedAnnotation.imagePadding}
+                      onChange={(p) => updateAnnotation(selectedAnnotation.id, { imagePadding: p })}
+                    />
 
                     <div>
                       <Label className="text-xs text-muted-foreground mb-1 block">Opacity</Label>

@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { ChevronDown, ChevronRight, RotateCcw } from 'lucide-react';
 import * as THREE from 'three';
 import { useModelStore, useCanvasStore, useUiStore, meshKeyOf } from '../../store/combinedStores';
-import { Input } from '../ui/input';
+import { NumberField } from '../ui/number-field';
 import { Label } from '../ui/label';
 import { Button } from '../ui/button';
 
@@ -37,37 +37,14 @@ export function MeshControls() {
     selectedMesh.scale.z,
   ];
 
-  const updateAxis = (
+  const commitAxis = (
     field: 'position' | 'rotation' | 'scale',
     axis: 0 | 1 | 2,
-    value: string
+    value: number
   ) => {
-    const num = parseFloat(value);
-    if (isNaN(num)) return;
     const current = field === 'position' ? position : field === 'rotation' ? rotation : scale;
     const next: [number, number, number] = [...current];
-    next[axis] = num;
-    setMeshTransform(meshKey, { [field]: next });
-    setTick((t) => t + 1);
-  };
-
-  // Arrow keys: ↑/↓ = base step, Shift = ×10 coarser, Alt = ×0.1 finer.
-  const handleStepKey = (
-    e: React.KeyboardEvent<HTMLInputElement>,
-    field: 'position' | 'rotation' | 'scale',
-    axis: 0 | 1 | 2
-  ) => {
-    if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
-    e.preventDefault();
-    const baseStep = 0.01;
-    const factor = e.shiftKey ? 10 : e.altKey ? 0.1 : 1;
-    const step = baseStep * factor;
-    const direction = e.key === 'ArrowUp' ? 1 : -1;
-    const current = field === 'position' ? position : field === 'rotation' ? rotation : scale;
-    // Round to 6 decimals to keep float drift out of the display
-    const newVal = Math.round((current[axis] + direction * step) * 1e6) / 1e6;
-    const next: [number, number, number] = [...current];
-    next[axis] = newVal;
+    next[axis] = value;
     setMeshTransform(meshKey, { [field]: next });
     setTick((t) => t + 1);
   };
@@ -160,13 +137,13 @@ export function MeshControls() {
                   >
                     {axisLabel(a)}
                   </span>
-                  <Input
-                    type="number"
-                    step="0.01"
-                    value={position[a].toFixed(3)}
-                    onChange={(e) => updateAxis('position', a as 0 | 1 | 2, e.target.value)}
-                    onKeyDown={(e) => handleStepKey(e, 'position', a as 0 | 1 | 2)}
+                  <NumberField
+                    value={position[a]}
+                    onCommit={(n) => commitAxis('position', a as 0 | 1 | 2, n)}
+                    step={0.01}
+                    precision={3}
                     className="h-7 text-xs px-1"
+                    aria-label={`Position ${axisLabel(a)}`}
                   />
                 </div>
               ))}
@@ -186,13 +163,13 @@ export function MeshControls() {
                   >
                     {axisLabel(a)}
                   </span>
-                  <Input
-                    type="number"
-                    step="0.01"
-                    value={rotation[a].toFixed(3)}
-                    onChange={(e) => updateAxis('rotation', a as 0 | 1 | 2, e.target.value)}
-                    onKeyDown={(e) => handleStepKey(e, 'rotation', a as 0 | 1 | 2)}
+                  <NumberField
+                    value={rotation[a]}
+                    onCommit={(n) => commitAxis('rotation', a as 0 | 1 | 2, n)}
+                    step={0.01}
+                    precision={3}
                     className="h-7 text-xs px-1"
+                    aria-label={`Rotation ${axisLabel(a)}`}
                   />
                 </div>
               ))}
@@ -212,13 +189,13 @@ export function MeshControls() {
                   >
                     {axisLabel(a)}
                   </span>
-                  <Input
-                    type="number"
-                    step="0.01"
-                    value={scale[a].toFixed(3)}
-                    onChange={(e) => updateAxis('scale', a as 0 | 1 | 2, e.target.value)}
-                    onKeyDown={(e) => handleStepKey(e, 'scale', a as 0 | 1 | 2)}
+                  <NumberField
+                    value={scale[a]}
+                    onCommit={(n) => commitAxis('scale', a as 0 | 1 | 2, n)}
+                    step={0.01}
+                    precision={3}
                     className="h-7 text-xs px-1"
+                    aria-label={`Scale ${axisLabel(a)}`}
                   />
                 </div>
               ))}

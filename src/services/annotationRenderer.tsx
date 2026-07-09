@@ -50,7 +50,7 @@ interface AnnotationBoxProps {
  * This is a React component that properly uses hooks.
  */
 export function AnnotationBox({ annotation, isSelected, onSelect, onChange, onContextMenu }: AnnotationBoxProps) {
-  const { x, y, width, height, rotation, label, color, imageData, imageFit, imageAlign, imageOpacity } = annotation;
+  const { x, y, width, height, rotation, label, color, imageData, imageFit, imageAlign, imageOpacity, imagePadding } = annotation;
   const rectGroupRef = useRef<Konva.Group>(null);
   const rectRef = useRef<Konva.Rect>(null);
   const labelGroupRef = useRef<Konva.Group>(null);
@@ -68,7 +68,8 @@ export function AnnotationBox({ annotation, isSelected, onSelect, onChange, onCo
         annImage.naturalWidth,
         annImage.naturalHeight,
         imageFit ?? 'contain',
-        imageAlign ?? 'center'
+        imageAlign ?? 'center',
+        imagePadding
       )
     : null;
 
@@ -325,7 +326,7 @@ function drawAnnotationLabel(
  */
 export function renderAnnotationToCanvas(ctx: CanvasRenderingContext2D, ann: Annotation) {
   if (ann.visible === false) return;
-  const { x, y, width, height, rotation, label, color, imageData, imageFit, imageAlign, imageOpacity } = ann;
+  const { x, y, width, height, rotation, label, color, imageData, imageFit, imageAlign, imageOpacity, imagePadding } = ann;
   const colorTheme = getColorTheme(color);
 
   ctx.save();
@@ -342,7 +343,8 @@ export function renderAnnotationToCanvas(ctx: CanvasRenderingContext2D, ann: Ann
       annImage.naturalWidth,
       annImage.naturalHeight,
       imageFit ?? 'contain',
-      imageAlign ?? 'center'
+      imageAlign ?? 'center',
+      imagePadding
     );
     ctx.save();
     ctx.beginPath();
@@ -421,7 +423,7 @@ export function renderAnnotationBasesToCanvas(ctx: CanvasRenderingContext2D, ann
  */
 export function renderAnnotationDecalToCanvas(ctx: CanvasRenderingContext2D, ann: Annotation) {
   if (ann.visible === false) return;
-  const { x, y, width, height, rotation, imageData, imageFit, imageAlign, imageOpacity } = ann;
+  const { x, y, width, height, rotation, imageData, imageFit, imageAlign, imageOpacity, imagePadding } = ann;
   if (!imageData) return;
   const annImage = getAnnotationImage(imageData);
   if (!annImage) return;
@@ -436,7 +438,8 @@ export function renderAnnotationDecalToCanvas(ctx: CanvasRenderingContext2D, ann
     annImage.naturalWidth,
     annImage.naturalHeight,
     imageFit ?? 'contain',
-    imageAlign ?? 'center'
+    imageAlign ?? 'center',
+    imagePadding
   );
   ctx.beginPath();
   ctx.rect(x, y, width, height);
