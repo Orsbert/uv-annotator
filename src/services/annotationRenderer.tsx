@@ -40,17 +40,41 @@ function useAnnotationImage(dataUrl: string | undefined): HTMLImageElement | nul
 interface AnnotationBoxProps {
   annotation: Annotation;
   isSelected: boolean;
-  onSelect: () => void;
+  /** Total number of selected boxes — drives group-drag & transformer visibility. */
+  selectionCount: number;
+  onSelect: (e: Konva.KonvaEventObject<MouseEvent | TouchEvent>) => void;
   onChange: (newAttrs: Partial<Annotation>) => void;
   onContextMenu?: (e: Konva.KonvaEventObject<PointerEvent>) => void;
+  /** Register/unregister this box's live Konva nodes with the editor (for group drag). */
+  registerNode?: (id: string, nodes: { group: Konva.Group; label: Konva.Group } | null) => void;
+  /** Select just this box when a drag starts on a currently-unselected one. */
+  onDragSelect?: (id: string) => void;
+  onGroupDragStart?: (id: string) => void;
+  onGroupDragMove?: (id: string) => void;
+  onGroupDragEnd?: (id: string) => void;
 }
 
 /**
  * Render a single annotation as a Konva Group.
  * This is a React component that properly uses hooks.
  */
-export function AnnotationBox({ annotation, isSelected, onSelect, onChange, onContextMenu }: AnnotationBoxProps) {
+export function AnnotationBox({
+  annotation,
+  isSelected,
+  selectionCount,
+  onSelect,
+  onChange,
+  onContextMenu,
+  registerNode,
+  onDragSelect,
+  onGroupDragStart,
+  onGroupDragMove,
+  onGroupDragEnd,
+}: AnnotationBoxProps) {
   const { x, y, width, height, rotation, label, color, imageData, imageFit, imageAlign, imageOpacity, imagePadding } = annotation;
+  // A box is a "group member" only when it's part of a multi-selection; then a
+  // drag moves the whole set (translate-only) and no per-box transformer shows.
+  const isGroupMember = isSelected && selectionCount > 1;
   const rectGroupRef = useRef<Konva.Group>(null);
   const rectRef = useRef<Konva.Rect>(null);
   const labelGroupRef = useRef<Konva.Group>(null);
@@ -89,13 +113,23 @@ export function AnnotationBox({ annotation, isSelected, onSelect, onChange, onCo
     if (rectGroupRef.current && labelGroupRef.current) {
       const rectGroup = rectGroupRef.current;
       const labelGroup = labelGroupRef.current;
-      
+
       labelGroup.x(rectGroup.x());
       labelGroup.y(rectGroup.y());
       labelGroup.rotation(rectGroup.rotation());
       labelGroup.getLayer()?.batchDraw();
     }
   }, [x, y, rotation, width, height]);
+
+  // Register this box's live Konva nodes so the editor can translate the whole
+  // selection together during a group drag (and its labels along with it).
+  useEffect(() => {
+    if (!registerNode) return;
+    const group = rectGroupRef.current;
+    const label = labelGroupRef.current;
+    if (group && label) registerNode(annotation.id, { group, label });
+    return () => registerNode(annotation.id, null);
+  }, [registerNode, annotation.id]);
 
   // Calculate label background width to accommodate text overflow
   // Not needed anymore since labels use the box width
@@ -115,9 +149,20 @@ export function AnnotationBox({ annotation, isSelected, onSelect, onChange, onCo
         onMouseEnter={() => setIsHovered(true)}
         onMouseLeave={() => setIsHovered(false)}
         ref={rectGroupRef}
+        onDragStart={() => {
+          // Grabbing an unselected box selects just it; grabbing a member of a
+          // multi-selection starts a group drag.
+          if (!isSelected) onDragSelect?.(annotation.id);
+          else if (isGroupMember) onGroupDragStart?.(annotation.id);
+        }}
         onDragEnd={() => {
           const node = rectGroupRef.current;
           if (!node) return;
+          // A group drag commits every selected box at once via the editor.
+          if (isGroupMember) {
+            onGroupDragEnd?.(annotation.id);
+            return;
+          }
           // Convert center position back to top-left
           onChange({
             x: node.x() - width / 2,
@@ -169,6 +214,8 @@ export function AnnotationBox({ annotation, isSelected, onSelect, onChange, onCo
             labelGroup.y(rectGroup.y());
             labelGroup.rotation(rectGroup.rotation());
           }
+          // Drag the rest of the selection along with this box, live.
+          if (isGroupMember) onGroupDragMove?.(annotation.id);
         }}
       >
         {/* Image inside box (clipped to rect) */}
@@ -242,7 +289,7 @@ export function AnnotationBox({ annotation, isSelected, onSelect, onChange, onCo
         })()}
       </Group>
 
-      {isSelected && (
+      {isSelected && selectionCount <= 1 && (
         <Transformer
           ref={transformerRef}
           rotateEnabled={true}

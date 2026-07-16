@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Stage, Layer, Rect, Image as KonvaImage, Transformer } from 'react-konva';
 import Konva from 'konva';
-import { Plus, Minus, Maximize2 } from 'lucide-react';
-import { useAnnotationStore, useModelStore, useOverlayStore, meshKeyOf, EMPTY_ANNOTATIONS } from '../store/combinedStores';
+import { Plus, Minus, Maximize2, MousePointer2, Square } from 'lucide-react';
+import { useAnnotationStore, useModelStore, useOverlayStore, useUiStore, meshKeyOf, EMPTY_ANNOTATIONS } from '../store/combinedStores';
 import { useCanvasStore } from '../store/combinedStores';
 import type { Annotation } from '../types';
 import { ANNOTATION_COLORS } from '../types';
@@ -27,11 +27,16 @@ export function AnnotationEditor() {
   const setMeshCanvas = useCanvasStore((state) => state.setMeshCanvas);
 
   const annotations = useAnnotationStore((state) => state.annotationsByMesh[meshKey] ?? EMPTY_ANNOTATIONS);
-  const selectedAnnotationId = useAnnotationStore((state) => state.selectedAnnotationId);
+  const selectedAnnotationIds = useAnnotationStore((state) => state.selectedAnnotationIds);
   const updateAnnotation = useAnnotationStore((state) => state.updateAnnotation);
-  const setSelectedAnnotationId = useAnnotationStore((state) => state.setSelectedAnnotationId);
+  const setSelectedAnnotationIds = useAnnotationStore((state) => state.setSelectedAnnotationIds);
+  const toggleAnnotationSelection = useAnnotationStore((state) => state.toggleAnnotationSelection);
+  const moveAnnotations = useAnnotationStore((state) => state.moveAnnotations);
   const addAnnotation = useAnnotationStore((state) => state.addAnnotation);
   const setPendingLabelEdit = useAnnotationStore((state) => state.setPendingLabelEdit);
+
+  const canvasTool = useUiStore((state) => state.canvasTool);
+  const setCanvasTool = useUiStore((state) => state.setCanvasTool);
 
   const overlays = useOverlayStore((state) => state.overlays);
   const updateOverlay = useOverlayStore((state) => state.updateOverlay);
@@ -54,6 +59,25 @@ export function AnnotationEditor() {
   const [isDrawing, setIsDrawing] = useState(false);
   const [drawStart, setDrawStart] = useState<{ x: number; y: number } | null>(null);
   const [currentRect, setCurrentRect] = useState<{ x: number; y: number; width: number; height: number } | null>(null);
+
+  // Marquee (rubber-band) selection state — active only with the Select tool.
+  const [isMarqueeing, setIsMarqueeing] = useState(false);
+  const [marqueeRect, setMarqueeRect] = useState<{ x: number; y: number; width: number; height: number } | null>(null);
+  const marqueeStartRef = useRef<{ x: number; y: number } | null>(null);
+  const marqueeAdditiveRef = useRef(false);
+
+  // Live Konva nodes per annotation id, so a multi-selection can be translated
+  // together during a drag. Populated by each AnnotationBox via registerNode.
+  const nodeRegistry = useRef<Map<string, { group: Konva.Group; label: Konva.Group }>>(new Map());
+  const registerNode = useCallback(
+    (id: string, nodes: { group: Konva.Group; label: Konva.Group } | null) => {
+      if (nodes) nodeRegistry.current.set(id, nodes);
+      else nodeRegistry.current.delete(id);
+    },
+    [],
+  );
+  // Start-of-drag CENTER positions of every selected node, keyed by id.
+  const groupDragStartRef = useRef<Map<string, { x: number; y: number }> | null>(null);
 
   // Right-click context menu for an annotation box (viewport coords + target id).
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; id: string } | null>(null);
@@ -188,6 +212,61 @@ export function AnnotationEditor() {
     }
   }, [editingOverlay?.id, overlays]);
 
+  // ----- Group drag: translate the whole multi-selection together -----------
+  // Grabbing an unselected box makes it the sole selection (then a normal drag).
+  const handleDragSelect = useCallback(
+    (id: string) => setSelectedAnnotationIds([id]),
+    [setSelectedAnnotationIds],
+  );
+
+  // Snapshot every selected node's center at drag start.
+  const beginGroupDrag = useCallback(() => {
+    const ids = useAnnotationStore.getState().selectedAnnotationIds;
+    const starts = new Map<string, { x: number; y: number }>();
+    for (const id of ids) {
+      const n = nodeRegistry.current.get(id);
+      if (n) starts.set(id, { x: n.group.x(), y: n.group.y() });
+    }
+    groupDragStartRef.current = starts;
+  }, []);
+
+  // Move the non-dragged members by the same delta as the dragged one, live.
+  const updateGroupDrag = useCallback((draggedId: string) => {
+    const starts = groupDragStartRef.current;
+    if (!starts) return;
+    const dragged = nodeRegistry.current.get(draggedId);
+    const from = starts.get(draggedId);
+    if (!dragged || !from) return;
+    const dx = dragged.group.x() - from.x;
+    const dy = dragged.group.y() - from.y;
+    starts.forEach((start, id) => {
+      if (id === draggedId) return;
+      const n = nodeRegistry.current.get(id);
+      if (!n) return;
+      n.group.x(start.x + dx);
+      n.group.y(start.y + dy);
+      n.label.x(start.x + dx);
+      n.label.y(start.y + dy);
+    });
+    dragged.group.getLayer()?.batchDraw();
+  }, []);
+
+  // Commit the whole group's move as one store write (one undo entry).
+  const endGroupDrag = useCallback(
+    (draggedId: string) => {
+      const starts = groupDragStartRef.current;
+      groupDragStartRef.current = null;
+      if (!starts) return;
+      const dragged = nodeRegistry.current.get(draggedId);
+      const from = starts.get(draggedId);
+      if (!dragged || !from) return;
+      const dx = dragged.group.x() - from.x;
+      const dy = dragged.group.y() - from.y;
+      if (dx !== 0 || dy !== 0) moveAnnotations(Array.from(starts.keys()), dx, dy);
+    },
+    [moveAnnotations],
+  );
+
   const handleMouseDown = (e: any) => {
     const stage = stageRef.current;
     if (!stage) return;
@@ -200,21 +279,31 @@ export function AnnotationEditor() {
     const pointer = stage.getPointerPosition();
     if (!pointer) return;
 
-    // Middle-click, right-click, or space-held left-click = pan; otherwise draw
+    // Middle-click, right-click, or space-held left-click = pan.
     const isMiddleOrRight = e.evt.button === 1 || e.evt.button === 2;
-
     if (isMiddleOrRight || isSpaceHeld) {
       setIsPanning(true);
       setPanStart(pointer);
-    } else {
-      const pos = stage.getRelativePointerPosition();
-      if (!pos) return;
+      return;
+    }
+
+    const pos = stage.getRelativePointerPosition();
+    if (!pos) return;
+
+    if (canvasTool === 'draw') {
+      // Draw tool: rubber-band a new annotation box.
       setIsDrawing(true);
       setDrawStart(pos);
       setCurrentRect({ x: pos.x, y: pos.y, width: 0, height: 0 });
+      setSelectedAnnotationIds([]);
+    } else {
+      // Select tool: rubber-band a marquee. Selection resolves on mouse-up, so a
+      // plain click (no drag) clears, and shift/cmd adds to the current set.
+      marqueeStartRef.current = pos;
+      marqueeAdditiveRef.current = e.evt.shiftKey || e.evt.metaKey || e.evt.ctrlKey;
+      setIsMarqueeing(true);
+      setMarqueeRect({ x: pos.x, y: pos.y, width: 0, height: 0 });
     }
-
-    setSelectedAnnotationId(null);
   };
 
   const handleMouseMove = () => {
@@ -232,6 +321,19 @@ export function AnnotationEditor() {
         y: stagePosition.y + dy,
       });
       setPanStart(pointer);
+      return;
+    }
+
+    if (isMarqueeing && marqueeStartRef.current) {
+      const pos = stage.getRelativePointerPosition();
+      if (!pos) return;
+      const s = marqueeStartRef.current;
+      setMarqueeRect({
+        x: Math.min(s.x, pos.x),
+        y: Math.min(s.y, pos.y),
+        width: Math.abs(pos.x - s.x),
+        height: Math.abs(pos.y - s.y),
+      });
       return;
     }
 
@@ -257,7 +359,32 @@ export function AnnotationEditor() {
       setPanStart(null);
       return;
     }
-    
+
+    if (isMarqueeing) {
+      const box = marqueeRect;
+      const additive = marqueeAdditiveRef.current;
+      setIsMarqueeing(false);
+      setMarqueeRect(null);
+      marqueeStartRef.current = null;
+      // A press with no real drag is a "click on empty" → clear (unless additive).
+      if (!box || (box.width < 3 && box.height < 3)) {
+        if (!additive) setSelectedAnnotationIds([]);
+        return;
+      }
+      // Touch semantics: select every visible box the marquee overlaps.
+      const hits = annotations
+        .filter((a) => a.visible !== false)
+        .filter((a) => Konva.Util.haveIntersection(box, { x: a.x, y: a.y, width: a.width, height: a.height }))
+        .map((a) => a.id);
+      if (additive) {
+        const current = useAnnotationStore.getState().selectedAnnotationIds;
+        setSelectedAnnotationIds(Array.from(new Set([...current, ...hits])));
+      } else {
+        setSelectedAnnotationIds(hits);
+      }
+      return;
+    }
+
     if (!isDrawing || !currentRect) {
       setIsDrawing(false);
       setDrawStart(null);
@@ -375,10 +502,32 @@ export function AnnotationEditor() {
     <div
       ref={containerRef}
       className={`w-full h-full flex items-center justify-center bg-muted overflow-hidden relative ${
-        isPanning ? 'cursor-grabbing' : isSpaceHeld ? 'cursor-grab' : ''
+        isPanning ? 'cursor-grabbing' : isSpaceHeld ? 'cursor-grab' : canvasTool === 'draw' ? 'cursor-crosshair' : ''
       }`}
       onContextMenu={(e) => e.preventDefault()}
     >
+      {/* Tool toggle (Select / Draw) */}
+      <div className="absolute top-4 left-4 z-10 flex flex-col gap-2 rounded-lg border bg-background/90 p-2 shadow-lg backdrop-blur-sm">
+        <Button
+          size="icon"
+          variant={canvasTool === 'select' ? 'default' : 'outline'}
+          onClick={() => setCanvasTool('select')}
+          className="h-8 w-8"
+          title="Select / move — V"
+        >
+          <MousePointer2 className="h-4 w-4" />
+        </Button>
+        <Button
+          size="icon"
+          variant={canvasTool === 'draw' ? 'default' : 'outline'}
+          onClick={() => setCanvasTool('draw')}
+          className="h-8 w-8"
+          title="Draw new box — D"
+        >
+          <Square className="h-4 w-4" />
+        </Button>
+      </div>
+
       {/* Zoom controls */}
       <div className="absolute top-4 right-4 z-10 flex flex-col gap-2 bg-background/90 backdrop-blur-sm p-2 rounded-lg border shadow-lg">
         <Button 
@@ -492,12 +641,28 @@ export function AnnotationEditor() {
               <AnnotationBox
                 key={annotation.id}
                 annotation={annotation}
-                isSelected={annotation.id === selectedAnnotationId}
-                onSelect={() => setSelectedAnnotationId(annotation.id)}
+                isSelected={selectedAnnotationIds.includes(annotation.id)}
+                selectionCount={selectedAnnotationIds.length}
+                registerNode={registerNode}
+                onSelect={(e) => {
+                  const me = e.evt as MouseEvent;
+                  if (me.shiftKey || me.metaKey || me.ctrlKey) {
+                    toggleAnnotationSelection(annotation.id);
+                  } else {
+                    setSelectedAnnotationIds([annotation.id]);
+                  }
+                }}
+                onDragSelect={handleDragSelect}
+                onGroupDragStart={beginGroupDrag}
+                onGroupDragMove={updateGroupDrag}
+                onGroupDragEnd={endGroupDrag}
                 onChange={(newAttrs) => updateAnnotation(annotation.id, newAttrs)}
                 onContextMenu={(e) => {
                   e.evt.preventDefault();
-                  setSelectedAnnotationId(annotation.id);
+                  // Right-click a non-member selects just it; a member keeps the set.
+                  if (!useAnnotationStore.getState().selectedAnnotationIds.includes(annotation.id)) {
+                    setSelectedAnnotationIds([annotation.id]);
+                  }
                   setCtxMenu({ x: e.evt.clientX, y: e.evt.clientY, id: annotation.id });
                 }}
               />
@@ -511,6 +676,21 @@ export function AnnotationEditor() {
                 stroke="#ff0000"
                 strokeWidth={2}
                 dash={[5, 5]}
+                listening={false}
+              />
+            )}
+
+            {/* Marquee selection rectangle (Select tool) */}
+            {isMarqueeing && marqueeRect && (marqueeRect.width > 0 || marqueeRect.height > 0) && (
+              <Rect
+                x={marqueeRect.x}
+                y={marqueeRect.y}
+                width={marqueeRect.width}
+                height={marqueeRect.height}
+                stroke="#3b82f6"
+                strokeWidth={1}
+                dash={[4, 4]}
+                fill="rgba(59, 130, 246, 0.12)"
                 listening={false}
               />
             )}
