@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, type MouseEvent as ReactMouseEvent } from 'react';
 import { ChevronDown, ChevronRight, Eye, EyeOff, Plus, Copy, Trash2, Wand2 } from 'lucide-react';
 import { useAnnotationStore, useModelStore, useCanvasStore, meshKeyOf, EMPTY_ANNOTATIONS } from '../../store/combinedStores';
 import { ANNOTATION_COLORS, getColorTheme } from '../../types';
@@ -11,13 +11,36 @@ export function AnnotationOutliner() {
   const canvasSize = useCanvasStore((s) => s.canvasSize);
   const annotations = useAnnotationStore((state) => state.annotationsByMesh[meshKey] ?? EMPTY_ANNOTATIONS);
   const selectedAnnotationId = useAnnotationStore((state) => state.selectedAnnotationId);
+  const selectedAnnotationIds = useAnnotationStore((state) => state.selectedAnnotationIds);
   const setSelectedAnnotationId = useAnnotationStore((state) => state.setSelectedAnnotationId);
-  const deleteAnnotation = useAnnotationStore((state) => state.deleteAnnotation);
+  const setSelectedAnnotationIds = useAnnotationStore((state) => state.setSelectedAnnotationIds);
+  const toggleAnnotationSelection = useAnnotationStore((state) => state.toggleAnnotationSelection);
+  const deleteAnnotations = useAnnotationStore((state) => state.deleteAnnotations);
   const updateAnnotation = useAnnotationStore((state) => state.updateAnnotation);
   const addAnnotation = useAnnotationStore((state) => state.addAnnotation);
   const setPendingLabelEdit = useAnnotationStore((state) => state.setPendingLabelEdit);
 
   const [open, setOpen] = useState(true);
+
+  // Row click with Figma-style modifiers: shift = range from the active row,
+  // cmd/ctrl = toggle one, plain = select only.
+  const handleRowClick = (e: ReactMouseEvent, id: string) => {
+    if (e.shiftKey && selectedAnnotationId) {
+      const ids = annotations.map((a) => a.id);
+      const from = ids.indexOf(selectedAnnotationId);
+      const to = ids.indexOf(id);
+      if (from !== -1 && to !== -1) {
+        const [lo, hi] = from < to ? [from, to] : [to, from];
+        setSelectedAnnotationIds(Array.from(new Set([...selectedAnnotationIds, ...ids.slice(lo, hi + 1)])));
+        return;
+      }
+    }
+    if (e.metaKey || e.ctrlKey) {
+      toggleAnnotationSelection(id);
+      return;
+    }
+    setSelectedAnnotationId(id);
+  };
 
   const handleDuplicate = (id: string) => {
     const original = annotations.find((a) => a.id === id);
@@ -89,7 +112,9 @@ export function AnnotationOutliner() {
         {selectedMesh?.name && (
           <span className="min-w-0 truncate text-xs font-normal text-muted-foreground">· {selectedMesh.name}</span>
         )}
-        <span className="ml-auto shrink-0 text-xs text-muted-foreground">{annotations.length}</span>
+        <span className="ml-auto shrink-0 text-xs text-muted-foreground">
+          {selectedAnnotationIds.length > 1 ? `${selectedAnnotationIds.length} / ${annotations.length}` : annotations.length}
+        </span>
       </button>
 
       {open && (
@@ -100,7 +125,7 @@ export function AnnotationOutliner() {
               <p className="text-xs text-muted-foreground text-center py-3">No annotations</p>
             )}
             {annotations.map((ann) => {
-              const isSel = ann.id === selectedAnnotationId;
+              const isSel = selectedAnnotationIds.includes(ann.id);
               return (
                 <div
                   key={ann.id}
@@ -118,7 +143,7 @@ export function AnnotationOutliner() {
 
                   <button
                     className="flex-1 min-w-0 flex items-center gap-2 py-1.5 text-left rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
-                    onClick={() => setSelectedAnnotationId(ann.id)}
+                    onClick={(e) => handleRowClick(e, ann.id)}
                     title={ann.label}
                   >
                     <span
@@ -161,9 +186,9 @@ export function AnnotationOutliner() {
               size="sm"
               variant="ghost"
               className="h-7 px-2"
-              disabled={!selectedAnnotationId}
-              onClick={() => selectedAnnotationId && deleteAnnotation(selectedAnnotationId)}
-              title="Delete"
+              disabled={selectedAnnotationIds.length === 0}
+              onClick={() => selectedAnnotationIds.length > 0 && deleteAnnotations(selectedAnnotationIds)}
+              title={selectedAnnotationIds.length > 1 ? `Delete ${selectedAnnotationIds.length}` : 'Delete'}
             >
               <Trash2 className="h-4 w-4" />
             </Button>

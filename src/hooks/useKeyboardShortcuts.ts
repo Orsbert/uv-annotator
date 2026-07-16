@@ -1,14 +1,16 @@
 import { useEffect } from 'react';
-import { useAnnotationStore, useModelStore, useCanvasStore, usePaintStore, useOverlayStore, useReferenceStore, meshKeyOf, useHistoryStore } from '../store/combinedStores';
+import { useAnnotationStore, useModelStore, useCanvasStore, usePaintStore, useOverlayStore, useReferenceStore, useUiStore, meshKeyOf, EMPTY_ANNOTATIONS, useHistoryStore } from '../store/combinedStores';
 import type { Annotation } from '../types';
 
 export function useKeyboardShortcuts() {
-  const selectedAnnotationId = useAnnotationStore((state) => state.selectedAnnotationId);
   const addAnnotation = useAnnotationStore((state) => state.addAnnotation);
-  const deleteAnnotation = useAnnotationStore((state) => state.deleteAnnotation);
   const setSelectedAnnotationId = useAnnotationStore((state) => state.setSelectedAnnotationId);
   const selectedMesh = useModelStore((state) => state.selectedMesh);
   const meshKey = meshKeyOf(selectedMesh);
+  const annotations = useAnnotationStore((state) => state.annotationsByMesh[meshKey] ?? EMPTY_ANNOTATIONS);
+  const selectedAnnotationIds = useAnnotationStore((state) => state.selectedAnnotationIds);
+  const deleteAnnotations = useAnnotationStore((state) => state.deleteAnnotations);
+  const setSelectedAnnotationIds = useAnnotationStore((state) => state.setSelectedAnnotationIds);
   const uvCanvas = useCanvasStore((state) => state.canvasByMesh[meshKey] ?? null);
   const isPaintMode = usePaintStore((state) => state.isPaintMode);
   const setPaintMode = usePaintStore((state) => state.setPaintMode);
@@ -22,8 +24,27 @@ export function useKeyboardShortcuts() {
       // Another listener already handled this (e.g., axis-lock cleared Escape)
       if (e.defaultPrevented) return;
 
+      // Cmd/Ctrl + A - Select all annotations on the current mesh
+      if ((e.metaKey || e.ctrlKey) && (e.key === 'a' || e.key === 'A')) {
+        e.preventDefault();
+        setSelectedAnnotationIds(annotations.filter((a) => a.visible !== false).map((a) => a.id));
+        return;
+      }
+
+      // V / D - Switch the 2D editor tool (Select / Draw)
+      if ((e.key === 'v' || e.key === 'V') && !e.metaKey && !e.ctrlKey) {
+        e.preventDefault();
+        useUiStore.getState().setCanvasTool('select');
+        return;
+      }
+      if ((e.key === 'd' || e.key === 'D') && !e.metaKey && !e.ctrlKey) {
+        e.preventDefault();
+        useUiStore.getState().setCanvasTool('draw');
+        return;
+      }
+
       // A - Add new annotation
-      if (e.key === 'a' || e.key === 'A') {
+      if ((e.key === 'a' || e.key === 'A') && !e.metaKey && !e.ctrlKey) {
         e.preventDefault();
         const newAnnotation: Annotation = {
           id: `ann-${Date.now()}`,
@@ -47,10 +68,10 @@ export function useKeyboardShortcuts() {
         }
       }
 
-      // Delete/Backspace - Delete selected annotation
-      if ((e.key === 'Delete' || e.key === 'Backspace') && selectedAnnotationId) {
+      // Delete/Backspace - Delete the whole selection
+      if ((e.key === 'Delete' || e.key === 'Backspace') && selectedAnnotationIds.length > 0) {
         e.preventDefault();
-        deleteAnnotation(selectedAnnotationId);
+        deleteAnnotations(selectedAnnotationIds);
       }
 
       // Escape - Exit box-draw mode, else paint mode, else deselect reference, else annotation
@@ -129,5 +150,5 @@ export function useKeyboardShortcuts() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [selectedAnnotationId, addAnnotation, deleteAnnotation, setSelectedAnnotationId, selectedMesh, uvCanvas, isPaintMode, setPaintMode]);
+  }, [annotations, selectedAnnotationIds, addAnnotation, deleteAnnotations, setSelectedAnnotationId, setSelectedAnnotationIds, selectedMesh, uvCanvas, isPaintMode, setPaintMode]);
 }
