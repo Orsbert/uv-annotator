@@ -52,6 +52,11 @@ export type AxisLock = null | 'x' | 'y' | 'z' | 'no-x' | 'no-y' | 'no-z';
 // G / R / S shortcuts.
 export type GizmoMode = 'translate' | 'rotate' | 'scale';
 
+// Active tool for the 2D UV editor. 'select' is home (click / marquee-select /
+// move annotations); 'draw' creates a new annotation box by dragging on the
+// empty canvas. Drawing is "sticky" — it stays in draw until you switch back.
+export type CanvasTool = 'select' | 'draw';
+
 interface UiState {
   moveMode: boolean;              // master gate: model meshes are only movable (gizmo + surface drag) when true
   xraySelected: boolean;          // draw the selected mesh over everything (annotation aid) vs true depth order
@@ -59,12 +64,14 @@ interface UiState {
   surfaceDragActive: boolean;     // transient: a drag is in progress, freeze OrbitControls
   axisLock: AxisLock;
   gizmoMode: GizmoMode;
+  canvasTool: CanvasTool;
   setMoveMode: (v: boolean) => void;
   setXraySelected: (v: boolean) => void;
   setSurfaceDragMode: (v: boolean) => void;
   setSurfaceDragActive: (v: boolean) => void;
   setAxisLock: (a: AxisLock) => void;
   setGizmoMode: (m: GizmoMode) => void;
+  setCanvasTool: (t: CanvasTool) => void;
 }
 
 export const useUiStore = create<UiState>((set) => ({
@@ -74,12 +81,14 @@ export const useUiStore = create<UiState>((set) => ({
   surfaceDragActive: false,
   axisLock: null,
   gizmoMode: 'translate',
+  canvasTool: 'select',
   setMoveMode: (moveMode) => set({ moveMode }),
   setXraySelected: (xraySelected) => set({ xraySelected }),
   setSurfaceDragMode: (surfaceDragMode) => set({ surfaceDragMode }),
   setSurfaceDragActive: (surfaceDragActive) => set({ surfaceDragActive }),
   setAxisLock: (axisLock) => set({ axisLock }),
   setGizmoMode: (gizmoMode) => set({ gizmoMode }),
+  setCanvasTool: (canvasTool) => set({ canvasTool }),
 }));
 
 /* -------------------------------------------------------------------------- */
@@ -360,14 +369,26 @@ temporalRegistry.model = {
 /** Annotation Store (per-mesh) */
 export interface AnnotationState {
   annotationsByMesh: Record<string, Annotation[]>;
+  /** Active/primary member of the selection — the last id added to the set, or
+   *  null. Kept in sync with `selectedAnnotationIds` so single-target consumers
+   *  (properties panel, context menu, label edit) keep working unchanged. */
   selectedAnnotationId: string | null;
+  /** The full transient multi-selection. `selectedAnnotationId` is its last item. */
+  selectedAnnotationIds: string[];
   pendingLabelEdit: string | null;
   addAnnotation: (annotation: Annotation, meshKey?: string) => void;
   updateAnnotation: (id: string, updates: Partial<Annotation>) => void;
   /** Apply many id-keyed patches in a single update (used by frame migration). */
   patchAnnotations: (patches: Array<{ id: string; updates: Partial<Annotation> }>) => void;
   deleteAnnotation: (id: string) => void;
+  /** Delete every id in one write (one undo entry). Used by group delete. */
+  deleteAnnotations: (ids: string[]) => void;
+  /** Translate every id by (dx, dy) in one write (one undo entry). Group move. */
+  moveAnnotations: (ids: string[], dx: number, dy: number) => void;
   setSelectedAnnotationId: (id: string | null) => void;
+  setSelectedAnnotationIds: (ids: string[]) => void;
+  /** Add the id if absent, remove it if present (shift/cmd-click). */
+  toggleAnnotationSelection: (id: string) => void;
   setPendingLabelEdit: (id: string | null) => void;
   clearAnnotations: (meshKey?: string) => void;
 }
@@ -382,6 +403,7 @@ export const useAnnotationStore = create<AnnotationState>()(
     (set) => ({
       annotationsByMesh: {},
       selectedAnnotationId: null,
+      selectedAnnotationIds: [],
       pendingLabelEdit: null,
       addAnnotation: (annotation, meshKey) => {
         const key = meshKey ?? currentMeshKey();
@@ -399,6 +421,7 @@ export const useAnnotationStore = create<AnnotationState>()(
             [key]: [...(state.annotationsByMesh[key] ?? []), stamped],
           },
           selectedAnnotationId: stamped.id,
+          selectedAnnotationIds: [stamped.id],
         }));
       },
       patchAnnotations: (patches) => {
@@ -441,19 +464,68 @@ export const useAnnotationStore = create<AnnotationState>()(
               break;
             }
           }
+          const remaining = state.selectedAnnotationIds.filter((x) => x !== id);
           return {
             annotationsByMesh: next,
-            selectedAnnotationId: state.selectedAnnotationId === id ? null : state.selectedAnnotationId,
+            selectedAnnotationIds: remaining,
+            selectedAnnotationId: remaining.length ? remaining[remaining.length - 1] : null,
           };
         });
       },
-      setSelectedAnnotationId: (id) => set({ selectedAnnotationId: id }),
+      deleteAnnotations: (ids) => {
+        if (ids.length === 0) return;
+        const idSet = new Set(ids);
+        set((state) => {
+          const next: Record<string, Annotation[]> = { ...state.annotationsByMesh };
+          for (const key of Object.keys(next)) {
+            if (next[key].some((a) => idSet.has(a.id))) {
+              next[key] = next[key].filter((a) => !idSet.has(a.id));
+            }
+          }
+          const remaining = state.selectedAnnotationIds.filter((x) => !idSet.has(x));
+          return {
+            annotationsByMesh: next,
+            selectedAnnotationIds: remaining,
+            selectedAnnotationId: remaining.length ? remaining[remaining.length - 1] : null,
+          };
+        });
+      },
+      moveAnnotations: (ids, dx, dy) => {
+        if (ids.length === 0 || (dx === 0 && dy === 0)) return;
+        const idSet = new Set(ids);
+        set((state) => {
+          const next: Record<string, Annotation[]> = { ...state.annotationsByMesh };
+          for (const key of Object.keys(next)) {
+            let touched = false;
+            const arr = next[key].map((a) => {
+              if (!idSet.has(a.id)) return a;
+              touched = true;
+              return { ...a, x: a.x + dx, y: a.y + dy };
+            });
+            if (touched) next[key] = arr;
+          }
+          return { annotationsByMesh: next };
+        });
+      },
+      setSelectedAnnotationId: (id) =>
+        set({ selectedAnnotationId: id, selectedAnnotationIds: id ? [id] : [] }),
+      setSelectedAnnotationIds: (ids) =>
+        set({ selectedAnnotationIds: ids, selectedAnnotationId: ids.length ? ids[ids.length - 1] : null }),
+      toggleAnnotationSelection: (id) =>
+        set((state) => {
+          const has = state.selectedAnnotationIds.includes(id);
+          const ids = has
+            ? state.selectedAnnotationIds.filter((x) => x !== id)
+            : [...state.selectedAnnotationIds, id];
+          return { selectedAnnotationIds: ids, selectedAnnotationId: ids.length ? ids[ids.length - 1] : null };
+        }),
       setPendingLabelEdit: (id) => set({ pendingLabelEdit: id }),
       clearAnnotations: (meshKey) => {
         const key = meshKey ?? currentMeshKey();
         set((state) => ({
           annotationsByMesh: { ...state.annotationsByMesh, [key]: [] },
           selectedAnnotationId: null,
+          selectedAnnotationIds: [],
         }));
       },
     }),

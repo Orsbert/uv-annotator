@@ -1,10 +1,11 @@
-import { Box } from 'lucide-react';
+import { Box, Trash2 } from 'lucide-react';
 import { useAnnotationStore, useModelStore, meshKeyOf, EMPTY_ANNOTATIONS } from '../../store/combinedStores';
 import { OverlayControls } from './OverlayControls';
 import { ReferenceControls } from './ReferenceControls';
 import { BackgroundTextureControls } from './BackgroundTextureControls';
 import { MeshControls } from './MeshControls';
 import { RegionProperties } from './RegionProperties';
+import { Button } from '../ui/button';
 
 /**
  * Selection-driven properties panel. It renders exactly one context:
@@ -19,14 +20,23 @@ export function PropertiesPanel() {
   const selectedMesh = useModelStore((s) => s.selectedMesh);
   const meshKey = meshKeyOf(selectedMesh);
   const selectedAnnotationId = useAnnotationStore((s) => s.selectedAnnotationId);
+  const selectedAnnotationIds = useAnnotationStore((s) => s.selectedAnnotationIds);
   const annotations = useAnnotationStore((s) => s.annotationsByMesh[meshKey] ?? EMPTY_ANNOTATIONS);
   const setSelectedAnnotationId = useAnnotationStore((s) => s.setSelectedAnnotationId);
+  const setSelectedAnnotationIds = useAnnotationStore((s) => s.setSelectedAnnotationIds);
+  const deleteAnnotations = useAnnotationStore((s) => s.deleteAnnotations);
 
   const selectedAnnotation = annotations.find((a) => a.id === selectedAnnotationId);
 
   return (
     <div className="h-full overflow-auto border-l bg-muted/30">
-      {selectedAnnotation ? (
+      {selectedAnnotationIds.length > 1 ? (
+        <MultiSelectionView
+          count={selectedAnnotationIds.length}
+          onClear={() => setSelectedAnnotationIds([])}
+          onDelete={() => deleteAnnotations(selectedAnnotationIds)}
+        />
+      ) : selectedAnnotation ? (
         <RegionProperties
           annotation={selectedAnnotation}
           meshName={selectedMesh?.name || 'mesh'}
@@ -64,6 +74,38 @@ function MeshView({ meshName }: { meshName: string }) {
       <BackgroundTextureControls />
       <OverlayControls />
       <ReferenceControls />
+    </div>
+  );
+}
+
+/** Shown when more than one region is selected: a summary + group actions. */
+function MultiSelectionView({
+  count,
+  onClear,
+  onDelete,
+}: {
+  count: number;
+  onClear: () => void;
+  onDelete: () => void;
+}) {
+  return (
+    <div className="py-2">
+      <div className="flex items-center gap-2 px-4 pb-2 pt-2">
+        <span className="truncate text-sm font-medium">{count} annotations selected</span>
+      </div>
+      <div className="space-y-3 px-4 py-2">
+        <p className="text-xs text-muted-foreground">
+          Drag any one on the UV map to move them together. Shift- or ⌘-click a box to add or remove it.
+        </p>
+        <div className="flex gap-2">
+          <Button size="sm" variant="outline" className="flex-1" onClick={onClear}>
+            Clear
+          </Button>
+          <Button size="sm" variant="destructive" className="flex-1" onClick={onDelete}>
+            <Trash2 className="mr-2 h-3 w-3" /> Delete all
+          </Button>
+        </div>
+      </div>
     </div>
   );
 }
