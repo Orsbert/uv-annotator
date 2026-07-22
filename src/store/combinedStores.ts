@@ -23,9 +23,14 @@ function debounce<T extends (...args: any[]) => void>(fn: T, ms: number): T {
 
 type PersistedModelState = Pick<ModelState, 'modelBuffer' | 'modelName' | 'selectedMeshName' | 'transformsByMesh' | 'visibilityByMesh'>;
 
-export function meshKeyOf(mesh: { name: string; uuid: string } | null | undefined): string {
+export function meshKeyOf(
+  mesh: { name: string; uuid: string; userData?: Record<string, unknown> } | null | undefined
+): string {
   if (!mesh) return '';
-  return mesh.name || mesh.uuid;
+  // Prefer the stable key assigned once at load (see loadModelFromBuffer). Fall
+  // back to name/uuid for any object that predates the assignment so callers
+  // never get an empty key.
+  return (mesh.userData?.meshKey as string | undefined) || mesh.name || mesh.uuid;
 }
 
 // Stable empty-array reference — used as `?? EMPTY_ANNOTATIONS` in selectors so
@@ -48,10 +53,14 @@ export type AxisLock = null | 'x' | 'y' | 'z' | 'no-x' | 'no-y' | 'no-z';
 export type GizmoMode = 'translate' | 'rotate' | 'scale';
 
 interface UiState {
+  moveMode: boolean;              // master gate: model meshes are only movable (gizmo + surface drag) when true
+  xraySelected: boolean;          // draw the selected mesh over everything (annotation aid) vs true depth order
   surfaceDragMode: boolean;       // user toggle: drag selected mesh along nearby surfaces
   surfaceDragActive: boolean;     // transient: a drag is in progress, freeze OrbitControls
   axisLock: AxisLock;
   gizmoMode: GizmoMode;
+  setMoveMode: (v: boolean) => void;
+  setXraySelected: (v: boolean) => void;
   setSurfaceDragMode: (v: boolean) => void;
   setSurfaceDragActive: (v: boolean) => void;
   setAxisLock: (a: AxisLock) => void;
@@ -59,10 +68,14 @@ interface UiState {
 }
 
 export const useUiStore = create<UiState>((set) => ({
+  moveMode: false,
+  xraySelected: true,
   surfaceDragMode: false,
   surfaceDragActive: false,
   axisLock: null,
   gizmoMode: 'translate',
+  setMoveMode: (moveMode) => set({ moveMode }),
+  setXraySelected: (xraySelected) => set({ xraySelected }),
   setSurfaceDragMode: (surfaceDragMode) => set({ surfaceDragMode }),
   setSurfaceDragActive: (surfaceDragActive) => set({ surfaceDragActive }),
   setAxisLock: (axisLock) => set({ axisLock }),
@@ -151,6 +164,8 @@ export interface ModelState {
   setSelectedMesh: (mesh: THREE.Mesh | null) => void;
   setModelBuffer: (buffer: ArrayBuffer | null, name: string | null) => void;
   setMeshTransform: (meshKey: string, transform: Partial<MeshTransform>) => void;
+  // Drop a mesh's stored override and restore its authored (GLB) transform.
+  resetMeshTransform: (meshKey: string) => void;
   // Merge per-mesh visibility flags (keyed by meshKey). Absent = visible.
   setMeshVisibility: (updates: Record<string, boolean>) => void;
   loadModelFromBuffer: () => Promise<void>;
@@ -190,6 +205,26 @@ export const useModelStore = create<ModelState>()(
           return { transformsByMesh: { ...state.transformsByMesh, [meshKey]: next } };
         });
       },
+      resetMeshTransform: (meshKey) => {
+        // Remove the persisted override (undoable via the temporal middleware)…
+        set((state) => {
+          if (!(meshKey in state.transformsByMesh)) return state;
+          const next = { ...state.transformsByMesh };
+          delete next[meshKey];
+          return { transformsByMesh: next };
+        });
+        // …then snap the live mesh back to the transform it had on load. The
+        // transformsByMesh subscriber only re-applies *existing* entries, so a
+        // removed one has to be restored here explicitly.
+        const mesh = get().meshes.find((m) => meshKeyOf(m) === meshKey);
+        const orig = mesh?.userData.originalTransform as MeshTransform | undefined;
+        if (mesh && orig) {
+          mesh.position.fromArray(orig.position);
+          mesh.rotation.set(orig.rotation[0], orig.rotation[1], orig.rotation[2]);
+          mesh.scale.fromArray(orig.scale);
+          mesh.updateMatrix();
+        }
+      },
       setMeshVisibility: (updates) => {
         set((state) => ({ visibilityByMesh: { ...state.visibilityByMesh, ...updates } }));
       },
@@ -207,9 +242,36 @@ export const useModelStore = create<ModelState>()(
           const result = await loader.parseAsync(modelBuffer, '');
           
           const meshes: THREE.Mesh[] = [];
+          // Assign each mesh a STABLE, collision-proof key and snapshot its
+          // authored (GLB) transform. The key is the bare node name when that
+          // name is unique — so existing per-mesh data (annotations, textures,
+          // visibility, transforms) keeps matching with no migration — and is
+          // disambiguated only for duplicate/empty names, which is exactly the
+          // case the old `name || uuid` key silently corrupted (one part's
+          // transform bleeding onto its same-named sibling).
+          const nameSeen = new Map<string, number>();
+          let meshIndex = 0;
           result.scene.traverse((child: THREE.Object3D) => {
             if (child instanceof THREE.Mesh) {
+              const base = child.name?.trim() || '';
+              let key: string;
+              if (base) {
+                const n = nameSeen.get(base) ?? 0;
+                nameSeen.set(base, n + 1);
+                // First occurrence keeps the bare name (backward-compatible);
+                // later duplicates get a deterministic, traversal-ordered suffix.
+                key = n === 0 ? base : `${base}#${n}`;
+              } else {
+                key = `__mesh__#${meshIndex}`;
+              }
+              child.userData.meshKey = key;
+              child.userData.originalTransform = {
+                position: child.position.toArray() as [number, number, number],
+                rotation: [child.rotation.x, child.rotation.y, child.rotation.z] as [number, number, number],
+                scale: child.scale.toArray() as [number, number, number],
+              };
               meshes.push(child);
+              meshIndex++;
             }
           });
 

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ChevronDown, ChevronRight, Eye, EyeOff, Box } from 'lucide-react';
+import { ChevronDown, ChevronRight, Eye, EyeOff, Box, RotateCcw } from 'lucide-react';
 import { useModelStore, useAnnotationStore, meshKeyOf } from '../../store/combinedStores';
 
 export function MeshList() {
@@ -8,6 +8,8 @@ export function MeshList() {
   const setSelectedMesh = useModelStore((state) => state.setSelectedMesh);
   const visibilityByMesh = useModelStore((state) => state.visibilityByMesh);
   const setMeshVisibility = useModelStore((state) => state.setMeshVisibility);
+  const transformsByMesh = useModelStore((state) => state.transformsByMesh);
+  const resetMeshTransform = useModelStore((state) => state.resetMeshTransform);
   const annotationsByMesh = useAnnotationStore((state) => state.annotationsByMesh);
 
   const [open, setOpen] = useState(true);
@@ -50,6 +52,7 @@ export function MeshList() {
             const isSelected = selectedMesh === mesh;
             const name = mesh.name || `Mesh ${idx + 1}`;
             const count = annotationsByMesh[meshKeyOf(mesh)]?.length ?? 0;
+            const moved = meshKeyOf(mesh) in transformsByMesh;
             return (
               <div
                 key={mesh.uuid}
@@ -82,6 +85,17 @@ export function MeshList() {
                     </span>
                   )}
                 </button>
+
+                {moved && (
+                  <button
+                    className="shrink-0 p-1 rounded text-amber-500 hover:bg-accent-foreground/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    onClick={(e) => { e.stopPropagation(); resetMeshTransform(meshKeyOf(mesh)); }}
+                    title="Moved from its original position — click to reset"
+                    aria-label="Reset mesh to original position"
+                  >
+                    <RotateCcw className="h-3.5 w-3.5" />
+                  </button>
+                )}
               </div>
             );
           })}

@@ -1,6 +1,6 @@
 import { useRef, useState, useEffect } from 'react';
 import { Canvas, ThreeEvent, useThree } from '@react-three/fiber';
-import { OrbitControls, Grid, Environment, TransformControls } from '@react-three/drei';
+import { OrbitControls, Grid, Environment, TransformControls, GizmoHelper, GizmoViewport } from '@react-three/drei';
 import { useModelStore, meshKeyOf, useUiStore, useReferenceStore } from '../store/combinedStores';
 import type { AxisLock } from '../store/combinedStores';
 import { useCanvasStore } from '../store/combinedStores';
@@ -78,6 +78,8 @@ function Scene() {
   const addPaintedUVCoord = usePaintStore((state) => state.addPaintedUVCoord);
   const brushSize = usePaintStore((state) => state.brushSize);
   const surfaceDragMode = useUiStore((state) => state.surfaceDragMode);
+  const moveMode = useUiStore((state) => state.moveMode);
+  const xraySelected = useUiStore((state) => state.xraySelected);
   const setSurfaceDragActive = useUiStore((state) => state.setSurfaceDragActive);
   const axisLock = useUiStore((state) => state.axisLock);
   const gizmoMode = useUiStore((state) => state.gizmoMode);
@@ -130,14 +132,14 @@ function Scene() {
   // cleanup resets the previously-selected mesh when the selection changes.
   useEffect(() => {
     const mesh = selectedMesh;
-    if (!mesh) return;
+    if (!mesh || !xraySelected) return;
     mesh.renderOrder = 999;
     mesh.onBeforeRender = (renderer) => renderer.clearDepth();
     return () => {
       mesh.renderOrder = 0;
       mesh.onBeforeRender = NOOP_BEFORE_RENDER;
     };
-  }, [selectedMesh]);
+  }, [selectedMesh, xraySelected]);
 
   const showX = axisLock === null || axisLock === 'x' || axisLock === 'no-y' || axisLock === 'no-z';
   const showY = axisLock === null || axisLock === 'y' || axisLock === 'no-x' || axisLock === 'no-z';
@@ -197,7 +199,7 @@ function Scene() {
       handlePaint(e);
       return;
     }
-    if (surfaceDragMode && e.object === selectedMesh && e.button === 0) {
+    if (moveMode && surfaceDragMode && e.object === selectedMesh && e.button === 0) {
       e.stopPropagation();
       startSurfaceDrag(e);
     }
@@ -401,7 +403,7 @@ function Scene() {
         fadeDistance={30} 
       />
       
-      {selectedMesh && !isPaintMode && !surfaceDragMode && !selectedReferenceId && (
+      {moveMode && selectedMesh && !isPaintMode && !surfaceDragMode && !selectedReferenceId && (
         <TransformControls
           object={selectedMesh}
           mode={gizmoMode}
@@ -416,6 +418,14 @@ function Scene() {
       <ProjectedBoxDecals />
 
       <CameraController />
+
+      {/* View-orientation gizmo: click a ±X / ±Y / ±Z cone to snap the camera to
+          look straight down that axis. Drives the default OrbitControls (which is
+          why OrbitControls sets makeDefault). Separate from the transform gizmo. */}
+      <GizmoHelper alignment="bottom-right" margin={[72, 72]}>
+        <GizmoViewport axisColors={['#ff3653', '#8adb00', '#2c8fff']} labelColor="#ffffff" />
+      </GizmoHelper>
+
       <Environment preset="studio" environmentIntensity={0.4} />
     </>
   );

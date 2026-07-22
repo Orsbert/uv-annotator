@@ -14,6 +14,11 @@ export function MeshControls() {
   const setBaseOpacity = useCanvasStore((s) => s.setBaseOpacity);
   const transform = useModelStore((s) => s.transformsByMesh[meshKey]);
   const setMeshTransform = useModelStore((s) => s.setMeshTransform);
+  const resetMeshTransform = useModelStore((s) => s.resetMeshTransform);
+  const moveMode = useUiStore((s) => s.moveMode);
+  const setMoveMode = useUiStore((s) => s.setMoveMode);
+  const xraySelected = useUiStore((s) => s.xraySelected);
+  const setXraySelected = useUiStore((s) => s.setXraySelected);
   const surfaceDragMode = useUiStore((s) => s.surfaceDragMode);
   const setSurfaceDragMode = useUiStore((s) => s.setSurfaceDragMode);
   const [, setTick] = useState(0);
@@ -84,13 +89,13 @@ export function MeshControls() {
   };
 
   const resetTransform = () => {
-    setMeshTransform(meshKey, {
-      position: [0, 0, 0],
-      rotation: [0, 0, 0],
-      scale: [1, 1, 1],
-    });
+    // Restore the mesh's authored (GLB) transform, not identity — a part modeled
+    // away from the origin should return where it belongs, not jump to world zero.
+    resetMeshTransform(meshKey);
     setTick((t) => t + 1);
   };
+
+  const isModified = !!transform;
 
   const handleOpacity = (opacity: number) => {
     setBaseOpacity(meshKey, opacity);
@@ -112,6 +117,19 @@ export function MeshControls() {
   return (
     <>
       <PropertySection title="Transform">
+        {/* Master gate: model geometry is only movable in the 3D view while this is
+            on, so ordinary annotation clicks can never nudge a part out of place. */}
+        <label className="flex items-center gap-2 text-xs cursor-pointer rounded border px-2 py-1.5">
+          <input
+            type="checkbox"
+            checked={moveMode}
+            onChange={(e) => setMoveMode(e.target.checked)}
+            className="h-3 w-3"
+          />
+          <span className="font-medium">Move parts</span>
+          <span className="text-[10px] text-muted-foreground ml-auto">3D gizmo + surface drag</span>
+        </label>
+
         {/* Position */}
         <div>
           <Label className="text-xs text-muted-foreground mb-1 block">Position</Label>
@@ -199,16 +217,23 @@ export function MeshControls() {
           variant="outline"
           className="w-full"
           onClick={resetTransform}
-          title="Reset position / rotation / scale"
+          disabled={!isModified}
+          title={isModified ? 'Restore this part to its original position' : 'Part is at its original position'}
         >
           <RotateCcw className="mr-2 h-3 w-3" />
-          Reset transform
+          {isModified ? 'Reset to original' : 'At original position'}
         </Button>
 
-        <label className="flex items-center gap-2 text-xs cursor-pointer">
+        <label
+          className={`flex items-center gap-2 text-xs ${
+            moveMode ? 'cursor-pointer' : 'opacity-50 cursor-not-allowed'
+          }`}
+          title={moveMode ? undefined : 'Enable “Move parts” first'}
+        >
           <input
             type="checkbox"
             checked={surfaceDragMode}
+            disabled={!moveMode}
             onChange={(e) => setSurfaceDragMode(e.target.checked)}
             className="h-3 w-3"
           />
@@ -234,6 +259,20 @@ export function MeshControls() {
         <p className="text-[10px] text-muted-foreground">
           Decal images stay fully opaque; only the base texture dims.
         </p>
+
+        {/* When on, the selected part is drawn over everything so you can annotate
+            it even when other parts occlude it. Turning it off renders the part in
+            true depth order — use it if a selected part looks like it's floating. */}
+        <label className="flex items-center gap-2 text-xs cursor-pointer pt-1">
+          <input
+            type="checkbox"
+            checked={xraySelected}
+            onChange={(e) => setXraySelected(e.target.checked)}
+            className="h-3 w-3"
+          />
+          <span>X-ray selected</span>
+          <span className="text-[10px] text-muted-foreground ml-auto">show over other parts</span>
+        </label>
       </PropertySection>
     </>
   );
