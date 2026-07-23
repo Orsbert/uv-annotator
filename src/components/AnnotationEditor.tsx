@@ -32,6 +32,7 @@ export function AnnotationEditor() {
   const setSelectedAnnotationIds = useAnnotationStore((state) => state.setSelectedAnnotationIds);
   const toggleAnnotationSelection = useAnnotationStore((state) => state.toggleAnnotationSelection);
   const moveAnnotations = useAnnotationStore((state) => state.moveAnnotations);
+  const patchAnnotations = useAnnotationStore((state) => state.patchAnnotations);
   const addAnnotation = useAnnotationStore((state) => state.addAnnotation);
   const setPendingLabelEdit = useAnnotationStore((state) => state.setPendingLabelEdit);
 
@@ -54,6 +55,9 @@ export function AnnotationEditor() {
   const containerRef = useRef<HTMLDivElement>(null);
   const overlayRefs = useRef<Map<string, Konva.Image>>(new Map());
   const overlayTransformerRef = useRef<Konva.Transformer>(null);
+  // Shared transformer for a multi-selection: one bounding box with move/scale/
+  // rotate handles that acts on every selected box at once (Figma-style).
+  const groupTransformerRef = useRef<Konva.Transformer>(null);
   
   // Drawing state
   const [isDrawing, setIsDrawing] = useState(false);
@@ -212,6 +216,24 @@ export function AnnotationEditor() {
     }
   }, [editingOverlay?.id, overlays]);
 
+  // Bind/unbind the shared group transformer to the selected boxes. Re-runs when
+  // the selection changes and after any annotation change (nodes are recreated on
+  // re-render, so their registry entries are fresh). Child registerNode effects
+  // run before this parent effect, so nodeRegistry is current here.
+  useEffect(() => {
+    const tr = groupTransformerRef.current;
+    if (!tr) return;
+    if (selectedAnnotationIds.length > 1) {
+      const groups = selectedAnnotationIds
+        .map((id) => nodeRegistry.current.get(id)?.group)
+        .filter((g): g is Konva.Group => !!g);
+      tr.nodes(groups);
+    } else {
+      tr.nodes([]);
+    }
+    tr.getLayer()?.batchDraw();
+  }, [selectedAnnotationIds, annotations]);
+
   // ----- Group drag: translate the whole multi-selection together -----------
   // Grabbing an unselected box makes it the sole selection (then a normal drag).
   const handleDragSelect = useCallback(
@@ -266,6 +288,34 @@ export function AnnotationEditor() {
     },
     [moveAnnotations],
   );
+
+  // Bake a group scale/rotate (from the shared transformer) back into each box's
+  // stored geometry, in one write. Each box's Konva group is positioned at its
+  // center, so g.x()/g.y() is the new center and g.rotation() the new angle; the
+  // transformer's scale is folded into width/height and the node scale reset so
+  // the next render starts clean.
+  const endGroupTransform = useCallback(() => {
+    const state = useAnnotationStore.getState();
+    const ids = state.selectedAnnotationIds;
+    const key = meshKeyOf(useModelStore.getState().selectedMesh);
+    const byId = new Map((state.annotationsByMesh[key] ?? []).map((a) => [a.id, a]));
+    const patches: Array<{ id: string; updates: Partial<Annotation> }> = [];
+    for (const id of ids) {
+      const n = nodeRegistry.current.get(id);
+      const ann = byId.get(id);
+      if (!n || !ann) continue;
+      const g = n.group;
+      const newW = Math.max(5, ann.width * g.scaleX());
+      const newH = Math.max(5, ann.height * g.scaleY());
+      patches.push({
+        id,
+        updates: { x: g.x() - newW / 2, y: g.y() - newH / 2, width: newW, height: newH, rotation: g.rotation() },
+      });
+      g.scaleX(1);
+      g.scaleY(1);
+    }
+    if (patches.length) patchAnnotations(patches);
+  }, [patchAnnotations]);
 
   const handleMouseDown = (e: any) => {
     const stage = stageRef.current;
@@ -666,7 +716,24 @@ export function AnnotationEditor() {
                   setCtxMenu({ x: e.evt.clientX, y: e.evt.clientY, id: annotation.id });
                 }}
               />
-            ))}{/* Draw preview rectangle while dragging */}
+            ))}
+
+            {/* Shared group transformer — move/scale/rotate the whole selection */}
+            {selectedAnnotationIds.length > 1 && (
+              <Transformer
+                ref={groupTransformerRef}
+                rotateEnabled={true}
+                enabledAnchors={[
+                  'top-left', 'top-center', 'top-right',
+                  'middle-left', 'middle-right',
+                  'bottom-left', 'bottom-center', 'bottom-right',
+                ]}
+                onTransformEnd={endGroupTransform}
+                boundBoxFunc={(oldBox, newBox) => (newBox.width < 5 || newBox.height < 5 ? oldBox : newBox)}
+              />
+            )}
+
+            {/* Draw preview rectangle while dragging */}
             {isDrawing && currentRect && (
               <Rect
                 x={currentRect.x}

@@ -170,6 +170,10 @@ export function AnnotationBox({
           });
         }}
         onTransformEnd={() => {
+          // A multi-selection is transformed by the editor's shared group
+          // transformer, which bakes every member in one write. Skip the
+          // per-box path so we don't double-apply or fragment the undo entry.
+          if (isGroupMember) return;
           const node = rectGroupRef.current;
           const rect = rectRef.current;
           if (!node || !rect) return;
